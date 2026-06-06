@@ -16,4 +16,6 @@ public class SubtitleSegment {
     private Integer revision;
 
     private Boolean isFinal;
+
+    private Long startedAtMs;
 }

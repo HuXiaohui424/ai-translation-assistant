@@ -3,8 +3,10 @@ package com.ai.translation.assistant.service.realtime;
 import com.ai.translation.assistant.config.RealtimeApiProperties;
 import com.ai.translation.assistant.domain.subtitle.SubtitleSegment;
 import com.ai.translation.assistant.domain.websocket.AudioChunkMessage;
+import com.ai.translation.assistant.domain.websocket.AudioSilenceMessage;
 import com.ai.translation.assistant.domain.websocket.RealtimeStatusMessage;
 import com.ai.translation.assistant.domain.websocket.SubtitleUpdateMessage;
+import com.ai.translation.assistant.service.subtitle.SentenceBoundaryDetector;
 import com.alibaba.dashscope.audio.asr.translation.TranslationRecognizerParam;
 import com.alibaba.dashscope.audio.asr.translation.TranslationRecognizerRealtime;
 import com.alibaba.dashscope.audio.asr.translation.results.TranscriptionResult;
@@ -34,6 +36,7 @@ public class RealtimeClient implements AutoCloseable {
     private final RealtimeApiProperties properties;
     private final RealtimeSubtitleListener subtitleListener;
     private final RealtimeStatusListener statusListener;
+    private final SentenceBoundaryDetector sentenceBoundaryDetector;
     private final TranslationRecognizerRealtime recognizer;
     private final AtomicBoolean started = new AtomicBoolean(false);
     private final AtomicInteger segmentSequence = new AtomicInteger();
@@ -46,12 +49,14 @@ public class RealtimeClient implements AutoCloseable {
         String sessionId,
         RealtimeApiProperties properties,
         RealtimeSubtitleListener subtitleListener,
-        RealtimeStatusListener statusListener
+        RealtimeStatusListener statusListener,
+        SentenceBoundaryDetector sentenceBoundaryDetector
     ) {
         this.sessionId = sessionId;
         this.properties = properties;
         this.subtitleListener = subtitleListener;
         this.statusListener = statusListener;
+        this.sentenceBoundaryDetector = sentenceBoundaryDetector;
         this.recognizer = new TranslationRecognizerRealtime();
     }
 
@@ -70,6 +75,14 @@ public class RealtimeClient implements AutoCloseable {
         for (int index = 0; index < SENTENCE_END_SILENCE_FRAME_COUNT; index += 1) {
             recognizer.sendAudioFrame(ByteBuffer.wrap(new byte[SILENCE_FRAME_BYTES]));
         }
+    }
+
+    public Optional<SubtitleUpdateMessage> handleSilence(AudioSilenceMessage message) {
+        if (!sentenceBoundaryDetector.shouldFinishBySilence(message.getDurationMs())) {
+            return Optional.empty();
+        }
+
+        return finishActiveSegment();
     }
 
     @Override
@@ -165,9 +178,11 @@ public class RealtimeClient implements AutoCloseable {
             return;
         }
 
-        boolean sentenceEnd = result.isSentenceEnd()
+        boolean modelFinal = result.isSentenceEnd()
             || Optional.ofNullable(transcriptionResult).map(TranscriptionResult::isSentenceEnd).orElse(false)
             || Optional.ofNullable(translation).map(Translation::isSentenceEnd).orElse(false);
+        boolean sentenceEnd = sentenceBoundaryDetector.shouldFinishByModelFinal(modelFinal)
+            || sentenceBoundaryDetector.shouldFinishByPunctuation(sourceText, translationText);
 
         updateSegment(transcriptionResult, translation, sourceText, translationText, sentenceEnd)
             .ifPresent(subtitleListener::onSubtitleUpdate);
@@ -186,6 +201,12 @@ public class RealtimeClient implements AutoCloseable {
             return Optional.empty();
         }
 
+        if (sentenceBoundaryDetector.shouldFinishByDuration(segment, System.currentTimeMillis())) {
+            segment.setIsFinal(true);
+            activeSegment = createSegment();
+            segment = activeSegment;
+        }
+
         segment.setSource(sourceText);
         segment.setTranslation(translationText);
         segment.setRevision(segment.getRevision() + 1);
@@ -201,6 +222,29 @@ public class RealtimeClient implements AutoCloseable {
             .isFinal(segment.getIsFinal())
             .latencyMs(Duration.ofMillis(Math.max(0, System.currentTimeMillis() - latestAudioTimestamp)).toMillis())
             .build());
+    }
+
+    private synchronized Optional<SubtitleUpdateMessage> finishActiveSegment() {
+        if (activeSegment == null || Boolean.TRUE.equals(activeSegment.getIsFinal())) {
+            return Optional.empty();
+        }
+
+        activeSegment.setRevision(activeSegment.getRevision() + 1);
+        activeSegment.setIsFinal(true);
+
+        SubtitleUpdateMessage subtitleUpdateMessage = SubtitleUpdateMessage.builder()
+            .type("subtitle.update")
+            .sessionId(sessionId)
+            .segmentId(activeSegment.getSegmentId())
+            .revision(activeSegment.getRevision())
+            .source(activeSegment.getSource())
+            .translation(activeSegment.getTranslation())
+            .isFinal(true)
+            .latencyMs(Duration.ofMillis(Math.max(0, System.currentTimeMillis() - latestAudioTimestamp)).toMillis())
+            .build();
+
+        activeSegment = createSegment();
+        return Optional.of(subtitleUpdateMessage);
     }
 
     private SubtitleSegment resolveSegment(TranscriptionResult transcriptionResult, Translation translation) {
@@ -230,6 +274,7 @@ public class RealtimeClient implements AutoCloseable {
             .translation("")
             .revision(0)
             .isFinal(false)
+            .startedAtMs(System.currentTimeMillis())
             .build();
     }
 

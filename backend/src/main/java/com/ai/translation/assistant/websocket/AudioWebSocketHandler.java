@@ -1,6 +1,7 @@
 package com.ai.translation.assistant.websocket;
 
 import com.ai.translation.assistant.domain.websocket.AudioChunkMessage;
+import com.ai.translation.assistant.domain.websocket.AudioSilenceMessage;
 import com.ai.translation.assistant.domain.websocket.RealtimeStatusMessage;
 import com.ai.translation.assistant.domain.websocket.SubtitleUpdateMessage;
 import com.ai.translation.assistant.service.realtime.RealtimeSessionService;
@@ -26,7 +27,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 public class AudioWebSocketHandler extends TextWebSocketHandler {
 
     private static final String AUDIO_CHUNK_TYPE = "audio.chunk";
-    private static final String AUDIO_SENTENCE_END_TYPE = "audio.sentence_end";
+    private static final String AUDIO_SILENCE_TYPE = "audio.silence";
 
     private final ObjectMapper objectMapper;
     private final Validator validator;
@@ -47,9 +48,17 @@ public class AudioWebSocketHandler extends TextWebSocketHandler {
         String messageType = payloadNode.path("type").asText();
         String sessionId = payloadNode.path("sessionId").asText();
 
-        if (AUDIO_SENTENCE_END_TYPE.equals(messageType)) {
+        if (AUDIO_SILENCE_TYPE.equals(messageType)) {
             websocketSessionIds.put(session.getId(), sessionId);
-            realtimeSessionService.sendSentenceEnd(sessionId);
+            AudioSilenceMessage silenceMessage = objectMapper.treeToValue(payloadNode, AudioSilenceMessage.class);
+            Set<ConstraintViolation<AudioSilenceMessage>> violations = validator.validate(silenceMessage);
+
+            if (!violations.isEmpty()) {
+                session.close(CloseStatus.BAD_DATA.withReason("Invalid audio silence message"));
+                return;
+            }
+
+            realtimeSessionService.handleSilence(silenceMessage, subtitleUpdateMessage -> sendMessage(session, subtitleUpdateMessage));
             return;
         }
 

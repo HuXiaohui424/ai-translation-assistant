@@ -2,6 +2,7 @@ package com.ai.translation.assistant.websocket;
 
 import com.ai.translation.assistant.domain.websocket.AudioChunkMessage;
 import com.ai.translation.assistant.domain.websocket.SubtitleUpdateMessage;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
@@ -21,6 +22,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 public class AudioWebSocketHandler extends TextWebSocketHandler {
 
     private static final String AUDIO_CHUNK_TYPE = "audio.chunk";
+    private static final String AUDIO_SENTENCE_END_TYPE = "audio.sentence_end";
     private static final String SUBTITLE_UPDATE_TYPE = "subtitle.update";
     private static final String[] MOCK_SOURCE_TEXTS = {
         "we need to optimize the database query",
@@ -41,10 +43,30 @@ public class AudioWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws IOException {
+        JsonNode payloadNode;
+
+        try {
+            payloadNode = objectMapper.readTree(message.getPayload());
+        } catch (IOException exception) {
+            session.close(CloseStatus.BAD_DATA.withReason("Invalid json payload"));
+            return;
+        }
+
+        String messageType = payloadNode.path("type").asText();
+
+        if (AUDIO_SENTENCE_END_TYPE.equals(messageType)) {
+            return;
+        }
+
+        if (!AUDIO_CHUNK_TYPE.equals(messageType)) {
+            session.close(CloseStatus.BAD_DATA.withReason("Unsupported message type"));
+            return;
+        }
+
         AudioChunkMessage audioChunkMessage;
 
         try {
-            audioChunkMessage = objectMapper.readValue(message.getPayload(), AudioChunkMessage.class);
+            audioChunkMessage = objectMapper.treeToValue(payloadNode, AudioChunkMessage.class);
         } catch (IOException exception) {
             session.close(CloseStatus.BAD_DATA.withReason("Invalid json payload"));
             return;
@@ -52,7 +74,7 @@ public class AudioWebSocketHandler extends TextWebSocketHandler {
 
         Set<ConstraintViolation<AudioChunkMessage>> violations = validator.validate(audioChunkMessage);
 
-        if (!violations.isEmpty() || !AUDIO_CHUNK_TYPE.equals(audioChunkMessage.getType())) {
+        if (!violations.isEmpty()) {
             session.close(CloseStatus.BAD_DATA.withReason("Invalid audio chunk message"));
             return;
         }

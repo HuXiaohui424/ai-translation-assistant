@@ -9,6 +9,12 @@ export interface AudioChunkMessage {
   data: string
 }
 
+export interface AudioSentenceEndMessage {
+  type: 'audio.sentence_end'
+  sessionId: string
+  timestamp: number
+}
+
 export interface SubtitleUpdateMessage {
   type: 'subtitle.update'
   sessionId: string
@@ -27,13 +33,10 @@ interface WebSocketClientOptions {
   onStateChange: (state: WebSocketConnectionState) => void
 }
 
-const MOCK_AUDIO_BASE64 = 'bW9jay1wY20xNg=='
-const MOCK_AUDIO_INTERVAL_MS = 1800
 const RECONNECT_DELAY_MS = 2000
 
 export class SubtitleWebSocketClient {
   private socket?: WebSocket
-  private mockAudioTimer?: number
   private reconnectTimer?: number
   private shouldReconnect = false
 
@@ -70,7 +73,6 @@ export class SubtitleWebSocketClient {
 
   disconnect(): void {
     this.shouldReconnect = false
-    this.stopMockAudio()
     this.clearReconnectTimer()
     this.socket?.close()
     this.socket = undefined
@@ -80,23 +82,7 @@ export class SubtitleWebSocketClient {
     return this.socket?.readyState === WebSocket.OPEN
   }
 
-  startMockAudio(): void {
-    if (this.mockAudioTimer) {
-      return
-    }
-
-    this.sendMockAudioChunk()
-    this.mockAudioTimer = window.setInterval(() => {
-      this.sendMockAudioChunk()
-    }, MOCK_AUDIO_INTERVAL_MS)
-  }
-
-  stopMockAudio(): void {
-    window.clearInterval(this.mockAudioTimer)
-    this.mockAudioTimer = undefined
-  }
-
-  private sendMockAudioChunk(): void {
+  sendAudioChunk(data: string): void {
     if (this.socket?.readyState !== WebSocket.OPEN) {
       return
     }
@@ -107,7 +93,21 @@ export class SubtitleWebSocketClient {
       timestamp: Date.now(),
       sampleRate: 16000,
       format: 'pcm16',
-      data: MOCK_AUDIO_BASE64
+      data
+    }
+
+    this.socket.send(JSON.stringify(message))
+  }
+
+  sendSentenceEnd(): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) {
+      return
+    }
+
+    const message: AudioSentenceEndMessage = {
+      type: 'audio.sentence_end',
+      sessionId: this.options.sessionId,
+      timestamp: Date.now()
     }
 
     this.socket.send(JSON.stringify(message))

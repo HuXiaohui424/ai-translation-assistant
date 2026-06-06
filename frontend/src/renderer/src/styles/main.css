@@ -223,12 +223,38 @@ button {
 .shortcut-hint {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+  gap: 10px;
   padding: 0 14px;
   border-top: 1px solid rgba(148, 163, 184, 0.16);
   color: #94a3b8;
   font-size: 12px;
   line-height: 1;
+}
+
+.capture-modes {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mode-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 5px;
+  color: #cbd5e1;
+  background: rgba(15, 23, 42, 0.58);
+  cursor: pointer;
+}
+
+.mode-button.active {
+  color: #f8fafc;
+  border-color: rgba(56, 189, 248, 0.68);
+  background: rgba(14, 116, 144, 0.48);
 }
 
 @media (max-width: 560px) {
@@ -241,6 +267,10 @@ button {
   }
 
   .latency-pill {
+    display: none;
+  }
+
+  .shortcut-hint > span {
     display: none;
   }
 

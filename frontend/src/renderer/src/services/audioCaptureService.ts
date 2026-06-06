@@ -13,6 +13,7 @@ const CHUNK_DURATION_MS = 100
 const TARGET_CHUNK_SAMPLES = TARGET_SAMPLE_RATE / (1000 / CHUNK_DURATION_MS)
 const SILENCE_RMS_THRESHOLD = 0.012
 const SENTENCE_END_SILENCE_MS = 600
+const TRAILING_AUDIO_GRACE_MS = 200
 
 export class AudioCaptureService {
   private stream?: MediaStream
@@ -23,6 +24,7 @@ export class AudioCaptureService {
   private outputSamples: number[] = []
   private silentDurationMs = 0
   private sentenceEndSent = false
+  private hasRecentSpeech = false
   private activeMode: AudioCaptureMode
 
   constructor(private readonly options: AudioCaptureServiceOptions) {
@@ -69,6 +71,7 @@ export class AudioCaptureService {
     this.outputSamples = []
     this.silentDurationMs = 0
     this.sentenceEndSent = false
+    this.hasRecentSpeech = false
     this.options.onStateChange('idle', this.activeMode)
   }
 
@@ -143,24 +146,31 @@ export class AudioCaptureService {
       const rms = this.calculateRms(chunk)
 
       if (rms < SILENCE_RMS_THRESHOLD) {
-        this.handleSilentChunk()
+        this.handleSilentChunk(chunk, rms)
         continue
       }
 
       this.silentDurationMs = 0
       this.sentenceEndSent = false
+      this.hasRecentSpeech = true
       this.options.onAudioChunk(this.toPcm16Base64(chunk), rms)
     }
   }
 
-  private handleSilentChunk(): void {
+  private handleSilentChunk(chunk: number[], rms: number): void {
     this.silentDurationMs += CHUNK_DURATION_MS
+
+    if (this.hasRecentSpeech && this.silentDurationMs <= TRAILING_AUDIO_GRACE_MS) {
+      this.options.onAudioChunk(this.toPcm16Base64(chunk), rms)
+      return
+    }
 
     if (this.silentDurationMs < SENTENCE_END_SILENCE_MS || this.sentenceEndSent) {
       return
     }
 
     this.sentenceEndSent = true
+    this.hasRecentSpeech = false
     this.options.onSilence(this.silentDurationMs)
   }
 

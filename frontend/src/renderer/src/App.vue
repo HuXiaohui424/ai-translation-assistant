@@ -8,9 +8,6 @@
             {{ connectionStatusText }}
           </span>
           <span class="latency-pill">{{ latency }}ms</span>
-          <span class="latency-pill realtime-pill" :class="realtimeStatusClass" :title="realtimeMessage">
-            {{ realtimeStatusText }}
-          </span>
           <span class="latency-pill">{{ captureStatusText }}</span>
         </div>
 
@@ -110,8 +107,6 @@ const captureMode = ref<AudioCaptureMode>('system')
 const activeCaptureMode = ref<AudioCaptureMode>('system')
 const captureState = ref<AudioCaptureState>('idle')
 const currentRms = ref(0)
-const realtimeStatus = ref<RealtimeStatusMessage['status']>('connecting')
-const realtimeMessage = ref('等待音频输入')
 
 let websocketClient: SubtitleWebSocketClient | undefined
 let audioCaptureService: AudioCaptureService | undefined
@@ -155,24 +150,6 @@ const captureStatusText = computed(() => {
   return `${modeText} · ${stateText[captureState.value]}`
 })
 
-const realtimeStatusText = computed(() => {
-  const statusText: Record<RealtimeStatusMessage['status'], string> = {
-    connecting: 'AI 连接中',
-    connected: 'AI 已连接',
-    completed: 'AI 已结束',
-    error: 'AI 异常'
-  }
-
-  return statusText[realtimeStatus.value]
-})
-
-const realtimeStatusClass = computed(() => ({
-  connected: realtimeStatus.value === 'connected',
-  connecting: realtimeStatus.value === 'connecting',
-  paused: realtimeStatus.value === 'completed',
-  error: realtimeStatus.value === 'error'
-}))
-
 function handleSubtitleUpdate(message: SubtitleUpdateMessage): void {
   const nextSegment: SubtitleSegment = {
     segmentId: message.segmentId,
@@ -213,9 +190,6 @@ function handleConnectionStateChange(state: WebSocketConnectionState): void {
 }
 
 function handleRealtimeStatus(message: RealtimeStatusMessage): void {
-  realtimeStatus.value = message.status
-  realtimeMessage.value = message.message
-
   if (message.status === 'error') {
     segments.value = [{
       segmentId: 'realtime-error',
@@ -234,14 +208,11 @@ async function togglePlayback(): Promise<void> {
   if (isPlaying.value) {
     websocketClient?.connect()
     connectionStatus.value = websocketClient?.isConnected() ? 'connected' : 'connecting'
-    realtimeStatus.value = 'connecting'
     await startAudioCapture()
     return
   }
 
   connectionStatus.value = 'paused'
-  realtimeStatus.value = 'completed'
-  realtimeMessage.value = '已暂停'
   latency.value = 0
   currentRms.value = 0
   await audioCaptureService?.stop()

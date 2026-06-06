@@ -1,10 +1,32 @@
 import { join } from 'node:path'
-import { app, BrowserWindow, globalShortcut, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, session, shell } from 'electron'
 
 const isDevelopment = Boolean(process.env.ELECTRON_RENDERER_URL)
 const TOGGLE_WINDOW_SHORTCUT = 'CommandOrControl+Alt+S'
 
 let mainWindow: BrowserWindow | null = null
+
+function registerDisplayMediaHandler(): void {
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: {
+        width: 0,
+        height: 0
+      }
+    })
+
+    if (sources.length === 0) {
+      callback({})
+      return
+    }
+
+    callback({
+      video: sources[0],
+      audio: 'loopback'
+    })
+  })
+}
 
 function createMainWindow(): void {
   mainWindow = new BrowserWindow({
@@ -86,6 +108,7 @@ ipcMain.handle('subtitle-window:toggle', () => {
 
 app.whenReady().then(() => {
   app.setAppUserModelId('com.ai.translation.assistant')
+  registerDisplayMediaHandler()
   createMainWindow()
   globalShortcut.register(TOGGLE_WINDOW_SHORTCUT, toggleMainWindow)
 

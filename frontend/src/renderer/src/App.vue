@@ -8,6 +8,7 @@
             {{ connectionStatusText }}
           </span>
           <span class="latency-pill">{{ latency }}ms</span>
+          <span class="latency-pill">{{ captureStatusText }}</span>
         </div>
 
         <div class="window-actions no-drag">
@@ -39,7 +40,25 @@
       </div>
 
       <footer class="shortcut-hint drag-region">
-        Ctrl/Command + Alt + S 隐藏或显示
+        <div class="capture-modes no-drag" aria-label="音频采集模式">
+          <button
+            class="mode-button"
+            :class="{ active: captureMode === 'system' }"
+            type="button"
+            @click="changeCaptureMode('system')"
+          >
+            系统音频
+          </button>
+          <button
+            class="mode-button"
+            :class="{ active: captureMode === 'microphone' }"
+            type="button"
+            @click="changeCaptureMode('microphone')"
+          >
+            麦克风
+          </button>
+        </div>
+        <span>RMS {{ currentRms.toFixed(3) }} · Ctrl/Command + Alt + S 隐藏或显示</span>
       </footer>
     </section>
   </main>
@@ -47,6 +66,11 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import {
+  AudioCaptureService,
+  type AudioCaptureMode,
+  type AudioCaptureState
+} from './services/audioCaptureService'
 import {
   SubtitleWebSocketClient,
   type SubtitleUpdateMessage,
@@ -78,8 +102,13 @@ const segments = ref<SubtitleSegment[]>([defaultCaption])
 const isPlaying = ref(true)
 const latency = ref(0)
 const connectionStatus = ref<DisplayConnectionStatus>('connecting')
+const captureMode = ref<AudioCaptureMode>('system')
+const activeCaptureMode = ref<AudioCaptureMode>('system')
+const captureState = ref<AudioCaptureState>('idle')
+const currentRms = ref(0)
 
 let websocketClient: SubtitleWebSocketClient | undefined
+let audioCaptureService: AudioCaptureService | undefined
 
 const currentCaption = computed(() =>
   segments.value.reduce((latestSegment, segment) =>
@@ -106,6 +135,19 @@ const connectionStatusClass = computed(() => ({
   error: connectionStatus.value === 'error',
   paused: connectionStatus.value === 'paused'
 }))
+
+const captureStatusText = computed(() => {
+  const modeText = activeCaptureMode.value === 'system' ? '系统音频' : '麦克风'
+  const stateText: Record<AudioCaptureState, string> = {
+    idle: '未采集',
+    requesting: '请求中',
+    capturing: '采集中',
+    fallback: '麦克风兜底',
+    error: '采集异常'
+  }
+
+  return `${modeText} · ${stateText[captureState.value]}`
+})
 
 function handleSubtitleUpdate(message: SubtitleUpdateMessage): void {
   const nextSegment: SubtitleSegment = {
@@ -146,19 +188,55 @@ function handleConnectionStateChange(state: WebSocketConnectionState): void {
   }
 }
 
-function togglePlayback(): void {
+async function togglePlayback(): Promise<void> {
   isPlaying.value = !isPlaying.value
 
   if (isPlaying.value) {
     websocketClient?.connect()
-    websocketClient?.startMockAudio()
     connectionStatus.value = websocketClient?.isConnected() ? 'connected' : 'connecting'
+    await startAudioCapture()
     return
   }
 
   connectionStatus.value = 'paused'
   latency.value = 0
-  websocketClient?.stopMockAudio()
+  currentRms.value = 0
+  await audioCaptureService?.stop()
+}
+
+async function changeCaptureMode(mode: AudioCaptureMode): Promise<void> {
+  captureMode.value = mode
+
+  if (!isPlaying.value) {
+    return
+  }
+
+  await startAudioCapture()
+}
+
+async function startAudioCapture(): Promise<void> {
+  await audioCaptureService?.stop()
+
+  audioCaptureService = new AudioCaptureService({
+    mode: captureMode.value,
+    onAudioChunk: (base64Pcm16, rms) => {
+      currentRms.value = rms
+      websocketClient?.sendAudioChunk(base64Pcm16)
+    },
+    onSentenceEnd: () => {
+      websocketClient?.sendSentenceEnd()
+    },
+    onStateChange: (state, mode) => {
+      captureState.value = state
+      activeCaptureMode.value = mode
+    }
+  })
+
+  try {
+    await audioCaptureService.start()
+  } catch {
+    captureState.value = 'error'
+  }
 }
 
 function hideWindow(): void {
@@ -174,10 +252,11 @@ onMounted(() => {
   })
 
   websocketClient.connect()
-  websocketClient.startMockAudio()
+  void startAudioCapture()
 })
 
 onBeforeUnmount(() => {
+  void audioCaptureService?.stop()
   websocketClient?.disconnect()
 })
 </script>

@@ -1,6 +1,7 @@
 package com.ai.translation.assistant.websocket;
 
 import com.ai.translation.assistant.domain.websocket.AudioChunkMessage;
+import com.ai.translation.assistant.domain.websocket.RealtimeStatusMessage;
 import com.ai.translation.assistant.domain.websocket.SubtitleUpdateMessage;
 import com.ai.translation.assistant.service.realtime.RealtimeSessionService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -73,10 +74,19 @@ public class AudioWebSocketHandler extends TextWebSocketHandler {
 
         websocketSessionIds.put(session.getId(), audioChunkMessage.getSessionId());
         try {
-            realtimeSessionService.forwardAudioChunk(audioChunkMessage, subtitleUpdateMessage -> sendSubtitleUpdate(session, subtitleUpdateMessage));
+            realtimeSessionService.forwardAudioChunk(
+                audioChunkMessage,
+                subtitleUpdateMessage -> sendMessage(session, subtitleUpdateMessage),
+                statusMessage -> sendMessage(session, statusMessage)
+            );
         } catch (RuntimeException exception) {
             realtimeSessionService.closeSession(audioChunkMessage.getSessionId());
-            session.close(CloseStatus.SERVER_ERROR.withReason("Realtime service unavailable"));
+            sendMessage(session, RealtimeStatusMessage.builder()
+                .type("realtime.status")
+                .sessionId(audioChunkMessage.getSessionId())
+                .status("error")
+                .message("实时识别服务不可用，请检查 API Key、网络或模型配置")
+                .build());
         }
     }
 
@@ -89,18 +99,20 @@ public class AudioWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    private void sendSubtitleUpdate(WebSocketSession session, SubtitleUpdateMessage subtitleUpdateMessage) {
+    private void sendMessage(WebSocketSession session, Object outgoingMessage) {
         if (!session.isOpen()) {
-            realtimeSessionService.closeSession(subtitleUpdateMessage.getSessionId());
             return;
         }
 
         try {
             synchronized (session) {
-                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(subtitleUpdateMessage)));
+                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(outgoingMessage)));
             }
         } catch (IOException exception) {
-            realtimeSessionService.closeSession(subtitleUpdateMessage.getSessionId());
+            websocketSessionIds.computeIfPresent(session.getId(), (websocketSessionId, realtimeSessionId) -> {
+                realtimeSessionService.closeSession(realtimeSessionId);
+                return null;
+            });
         }
     }
 }

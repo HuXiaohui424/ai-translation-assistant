@@ -2,6 +2,7 @@ package com.ai.translation.assistant.service.realtime;
 
 import com.ai.translation.assistant.config.RealtimeApiProperties;
 import com.ai.translation.assistant.domain.websocket.AudioChunkMessage;
+import com.ai.translation.assistant.domain.websocket.RealtimeStatusMessage;
 import com.ai.translation.assistant.domain.websocket.SubtitleUpdateMessage;
 import com.alibaba.dashscope.audio.asr.translation.TranslationRecognizerParam;
 import com.alibaba.dashscope.audio.asr.translation.TranslationRecognizerRealtime;
@@ -29,6 +30,7 @@ public class RealtimeClient implements AutoCloseable {
     private final String sessionId;
     private final RealtimeApiProperties properties;
     private final RealtimeSubtitleListener subtitleListener;
+    private final RealtimeStatusListener statusListener;
     private final TranslationRecognizerRealtime recognizer;
     private final AtomicBoolean started = new AtomicBoolean(false);
     private final AtomicInteger revision = new AtomicInteger();
@@ -38,11 +40,13 @@ public class RealtimeClient implements AutoCloseable {
     public RealtimeClient(
         String sessionId,
         RealtimeApiProperties properties,
-        RealtimeSubtitleListener subtitleListener
+        RealtimeSubtitleListener subtitleListener,
+        RealtimeStatusListener statusListener
     ) {
         this.sessionId = sessionId;
         this.properties = properties;
         this.subtitleListener = subtitleListener;
+        this.statusListener = statusListener;
         this.recognizer = new TranslationRecognizerRealtime();
     }
 
@@ -98,6 +102,7 @@ public class RealtimeClient implements AutoCloseable {
             .build();
 
         recognizer.call(param, createCallback());
+        sendStatus("connecting", "正在连接实时识别服务");
     }
 
     private ResultCallback<TranslationRecognizerResult> createCallback() {
@@ -105,6 +110,7 @@ public class RealtimeClient implements AutoCloseable {
             @Override
             public void onOpen(Status status) {
                 log.info("Realtime recognizer connected, sessionId={}, status={}", sessionId, status);
+                sendStatus("connected", "实时识别服务已连接");
             }
 
             @Override
@@ -116,14 +122,25 @@ public class RealtimeClient implements AutoCloseable {
             public void onComplete() {
                 started.set(false);
                 log.info("Realtime recognizer completed, sessionId={}", sessionId);
+                sendStatus("completed", "实时识别服务已结束");
             }
 
             @Override
             public void onError(Exception exception) {
                 started.set(false);
                 log.warn("Realtime recognizer error, sessionId={}", sessionId, exception);
+                sendStatus("error", "实时识别服务异常，请检查 API Key、网络或模型配置");
             }
         };
+    }
+
+    private void sendStatus(String status, String message) {
+        statusListener.onRealtimeStatus(RealtimeStatusMessage.builder()
+            .type("realtime.status")
+            .sessionId(sessionId)
+            .status(status)
+            .message(message)
+            .build());
     }
 
     private void handleResult(TranslationRecognizerResult result) {

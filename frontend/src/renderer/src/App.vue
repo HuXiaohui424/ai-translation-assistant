@@ -8,6 +8,9 @@
             {{ connectionStatusText }}
           </span>
           <span class="latency-pill">{{ latency }}ms</span>
+          <span class="latency-pill realtime-pill" :class="realtimeStatusClass" :title="realtimeMessage">
+            {{ realtimeStatusText }}
+          </span>
           <span class="latency-pill">{{ captureStatusText }}</span>
         </div>
 
@@ -73,6 +76,7 @@ import {
 } from './services/audioCaptureService'
 import {
   SubtitleWebSocketClient,
+  type RealtimeStatusMessage,
   type SubtitleUpdateMessage,
   type WebSocketConnectionState
 } from './services/websocketClient'
@@ -106,6 +110,8 @@ const captureMode = ref<AudioCaptureMode>('system')
 const activeCaptureMode = ref<AudioCaptureMode>('system')
 const captureState = ref<AudioCaptureState>('idle')
 const currentRms = ref(0)
+const realtimeStatus = ref<RealtimeStatusMessage['status']>('connecting')
+const realtimeMessage = ref('等待音频输入')
 
 let websocketClient: SubtitleWebSocketClient | undefined
 let audioCaptureService: AudioCaptureService | undefined
@@ -149,6 +155,24 @@ const captureStatusText = computed(() => {
   return `${modeText} · ${stateText[captureState.value]}`
 })
 
+const realtimeStatusText = computed(() => {
+  const statusText: Record<RealtimeStatusMessage['status'], string> = {
+    connecting: 'AI 连接中',
+    connected: 'AI 已连接',
+    completed: 'AI 已结束',
+    error: 'AI 异常'
+  }
+
+  return statusText[realtimeStatus.value]
+})
+
+const realtimeStatusClass = computed(() => ({
+  connected: realtimeStatus.value === 'connected',
+  connecting: realtimeStatus.value === 'connecting',
+  paused: realtimeStatus.value === 'completed',
+  error: realtimeStatus.value === 'error'
+}))
+
 function handleSubtitleUpdate(message: SubtitleUpdateMessage): void {
   const nextSegment: SubtitleSegment = {
     segmentId: message.segmentId,
@@ -188,17 +212,36 @@ function handleConnectionStateChange(state: WebSocketConnectionState): void {
   }
 }
 
+function handleRealtimeStatus(message: RealtimeStatusMessage): void {
+  realtimeStatus.value = message.status
+  realtimeMessage.value = message.message
+
+  if (message.status === 'error') {
+    segments.value = [{
+      segmentId: 'realtime-error',
+      revision: Date.now(),
+      source: message.message,
+      translation: '实时识别服务暂不可用，请检查后端 API Key、网络或模型配置。',
+      isFinal: true,
+      updatedAt: Date.now()
+    }]
+  }
+}
+
 async function togglePlayback(): Promise<void> {
   isPlaying.value = !isPlaying.value
 
   if (isPlaying.value) {
     websocketClient?.connect()
     connectionStatus.value = websocketClient?.isConnected() ? 'connected' : 'connecting'
+    realtimeStatus.value = 'connecting'
     await startAudioCapture()
     return
   }
 
   connectionStatus.value = 'paused'
+  realtimeStatus.value = 'completed'
+  realtimeMessage.value = '已暂停'
   latency.value = 0
   currentRms.value = 0
   await audioCaptureService?.stop()
@@ -248,6 +291,7 @@ onMounted(() => {
     url: 'ws://localhost:8080/ws/audio',
     sessionId,
     onSubtitleUpdate: handleSubtitleUpdate,
+    onRealtimeStatus: handleRealtimeStatus,
     onStateChange: handleConnectionStateChange
   })
 

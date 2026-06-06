@@ -10,7 +10,11 @@ public class RealtimeClientFactory {
 
     private final RealtimeApiProperties properties;
 
-    public RealtimeClient create(String sessionId, RealtimeSubtitleListener listener) {
-        return new RealtimeClient(sessionId, properties, listener);
+    public RealtimeClient create(
+        String sessionId,
+        RealtimeSubtitleListener subtitleListener,
+        RealtimeStatusListener statusListener
+    ) {
+        return new RealtimeClient(sessionId, properties, subtitleListener, statusListener);
     }
 }

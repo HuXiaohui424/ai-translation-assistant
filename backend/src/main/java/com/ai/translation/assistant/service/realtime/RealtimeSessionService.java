@@ -1,6 +1,7 @@
 package com.ai.translation.assistant.service.realtime;
 
 import com.ai.translation.assistant.domain.websocket.AudioChunkMessage;
+import com.ai.translation.assistant.domain.websocket.RealtimeStatusMessage;
 import com.ai.translation.assistant.domain.websocket.SubtitleUpdateMessage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -15,10 +16,14 @@ public class RealtimeSessionService {
     private final RealtimeClientFactory realtimeClientFactory;
     private final ConcurrentMap<String, RealtimeClient> realtimeClients = new ConcurrentHashMap<>();
 
-    public void forwardAudioChunk(AudioChunkMessage message, Consumer<SubtitleUpdateMessage> subtitleSender) {
+    public void forwardAudioChunk(
+        AudioChunkMessage message,
+        Consumer<SubtitleUpdateMessage> subtitleSender,
+        Consumer<RealtimeStatusMessage> statusSender
+    ) {
         RealtimeClient realtimeClient = realtimeClients.computeIfAbsent(
             message.getSessionId(),
-            sessionId -> realtimeClientFactory.create(sessionId, subtitleSender::accept)
+            sessionId -> realtimeClientFactory.create(sessionId, subtitleSender::accept, statusSender::accept)
         );
 
         realtimeClient.sendAudioChunk(message);

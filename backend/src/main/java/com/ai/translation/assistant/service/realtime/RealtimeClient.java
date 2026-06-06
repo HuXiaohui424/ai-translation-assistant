@@ -29,9 +29,6 @@ import org.springframework.util.StringUtils;
 @Slf4j
 public class RealtimeClient implements AutoCloseable {
 
-    private static final int SILENCE_FRAME_BYTES = 3_200;
-    private static final int SENTENCE_END_SILENCE_FRAME_COUNT = 6;
-
     private final String sessionId;
     private final RealtimeApiProperties properties;
     private final RealtimeSubtitleListener subtitleListener;
@@ -66,16 +63,6 @@ public class RealtimeClient implements AutoCloseable {
         latestAudioTimestamp = message.getTimestamp();
         byte[] audioBytes = Base64.getDecoder().decode(message.getData());
         recognizer.sendAudioFrame(ByteBuffer.wrap(audioBytes));
-    }
-
-    public void sendSentenceEndSilence() {
-        if (!started.get()) {
-            return;
-        }
-
-        for (int index = 0; index < SENTENCE_END_SILENCE_FRAME_COUNT; index += 1) {
-            recognizer.sendAudioFrame(ByteBuffer.wrap(new byte[SILENCE_FRAME_BYTES]));
-        }
     }
 
     public Optional<SubtitleUpdateMessage> handleSilence(AudioSilenceMessage message) {

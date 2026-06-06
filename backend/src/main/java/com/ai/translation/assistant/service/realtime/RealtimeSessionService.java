@@ -34,7 +34,6 @@ public class RealtimeSessionService {
         RealtimeClient realtimeClient = realtimeClients.get(message.getSessionId());
 
         if (realtimeClient != null) {
-            realtimeClient.sendSentenceEndSilence();
             realtimeClient.handleSilence(message).ifPresent(subtitleSender);
         }
     }

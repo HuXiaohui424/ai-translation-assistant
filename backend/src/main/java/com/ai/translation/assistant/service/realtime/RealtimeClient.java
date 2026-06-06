@@ -16,7 +16,9 @@ import com.alibaba.dashscope.common.ResultCallback;
 import com.alibaba.dashscope.common.Status;
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -173,26 +175,37 @@ public class RealtimeClient implements AutoCloseable {
         boolean sentenceEnd = sentenceBoundaryDetector.shouldFinishByModelFinal(modelFinal);
 
         updateSegment(transcriptionResult, translation, sourceText, translationText, sentenceEnd)
-            .ifPresent(subtitleListener::onSubtitleUpdate);
+            .forEach(subtitleListener::onSubtitleUpdate);
     }
 
-    private synchronized Optional<SubtitleUpdateMessage> updateSegment(
+    private synchronized List<SubtitleUpdateMessage> updateSegment(
         TranscriptionResult transcriptionResult,
         Translation translation,
         String sourceText,
         String translationText,
         boolean sentenceEnd
     ) {
-        SubtitleSegment segment = resolveSegment(transcriptionResult, translation);
+        String sentenceKey = buildSentenceKey(transcriptionResult, translation);
+        SubtitleSegment segment = resolveSegment(sentenceKey);
         long currentTimeMs = System.currentTimeMillis();
+        List<SubtitleUpdateMessage> updates = new ArrayList<>();
+
+        if (shouldForceNewSegment(segment, currentTimeMs)) {
+            segment.setIsFinal(true);
+            segment.setFinalizedAtMs(currentTimeMs);
+            updates.add(buildSubtitleUpdate(segment));
+            segment = createAndActivateSegment();
+            bindSentenceKey(sentenceKey, segment);
+        }
 
         if (Boolean.TRUE.equals(segment.getIsFinal())) {
             if (sentenceBoundaryDetector.canReviseFinalSegment(segment, sourceText, translationText)) {
                 sentenceEnd = true;
             } else if (!sentenceEnd) {
                 segment = createAndActivateSegment();
+                bindSentenceKey(sentenceKey, segment);
             } else {
-                return Optional.empty();
+                return updates;
             }
         }
 
@@ -205,7 +218,12 @@ public class RealtimeClient implements AutoCloseable {
             segment.setFinalizedAtMs(currentTimeMs);
         }
 
-        return Optional.of(SubtitleUpdateMessage.builder()
+        updates.add(buildSubtitleUpdate(segment));
+        return updates;
+    }
+
+    private SubtitleUpdateMessage buildSubtitleUpdate(SubtitleSegment segment) {
+        return SubtitleUpdateMessage.builder()
             .type("subtitle.update")
             .sessionId(sessionId)
             .segmentId(segment.getSegmentId())
@@ -214,19 +232,17 @@ public class RealtimeClient implements AutoCloseable {
             .translation(segment.getTranslation())
             .isFinal(segment.getIsFinal())
             .latencyMs(Duration.ofMillis(Math.max(0, System.currentTimeMillis() - latestAudioTimestamp)).toMillis())
-            .build());
+            .build();
     }
 
-    private SubtitleSegment resolveSegment(TranscriptionResult transcriptionResult, Translation translation) {
-        String sentenceKey = buildSentenceKey(transcriptionResult, translation);
-
+    private SubtitleSegment resolveSegment(String sentenceKey) {
         if (sentenceKey != null) {
             return sentenceSegments.computeIfAbsent(sentenceKey, ignored -> {
                 if (activeSegment != null && !Boolean.TRUE.equals(activeSegment.getIsFinal())) {
                     return activeSegment;
                 }
 
-                return createSegment();
+                return createAndActivateSegment();
             });
         }
 
@@ -236,6 +252,26 @@ public class RealtimeClient implements AutoCloseable {
         }
 
         return activeSegment;
+    }
+
+    private boolean shouldForceNewSegment(SubtitleSegment segment, long currentTimeMs) {
+        return hasDisplayableText(segment)
+            && !Boolean.TRUE.equals(segment.getIsFinal())
+            && sentenceBoundaryDetector.shouldFinishByDuration(
+                segment,
+                currentTimeMs,
+                getMaxSegmentDurationMs()
+            );
+    }
+
+    private long getMaxSegmentDurationMs() {
+        return Optional.ofNullable(properties.getMaxSegmentDurationMs()).orElse(3000L);
+    }
+
+    private void bindSentenceKey(String sentenceKey, SubtitleSegment segment) {
+        if (sentenceKey != null) {
+            sentenceSegments.put(sentenceKey, segment);
+        }
     }
 
     private SubtitleSegment createAndActivateSegment() {

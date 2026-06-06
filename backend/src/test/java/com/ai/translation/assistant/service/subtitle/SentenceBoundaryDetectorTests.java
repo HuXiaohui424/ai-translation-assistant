@@ -50,4 +50,36 @@ class SentenceBoundaryDetectorTests {
 
         assertThat(canRevise).isFalse();
     }
+
+    @Test
+    void finishesSegmentWhenDurationReachesLimit() {
+        SubtitleSegment segment = SubtitleSegment.builder()
+            .segmentId("seg-1")
+            .source("hello")
+            .translation("hello")
+            .revision(1)
+            .isFinal(false)
+            .startedAtMs(1_000L)
+            .build();
+
+        boolean shouldFinish = detector.shouldFinishByDuration(segment, 4_000L, 3_000L);
+
+        assertThat(shouldFinish).isTrue();
+    }
+
+    @Test
+    void keepsSegmentWhenDurationIsBelowLimit() {
+        SubtitleSegment segment = SubtitleSegment.builder()
+            .segmentId("seg-1")
+            .source("hello")
+            .translation("hello")
+            .revision(1)
+            .isFinal(false)
+            .startedAtMs(1_000L)
+            .build();
+
+        boolean shouldFinish = detector.shouldFinishByDuration(segment, 3_999L, 3_000L);
+
+        assertThat(shouldFinish).isFalse();
+    }
 }

@@ -202,14 +202,11 @@ button {
 }
 
 .subtitle-block p {
-  display: -webkit-box;
   max-width: 68ch;
   max-height: 100%;
   margin: 0;
   overflow: hidden;
   overflow-wrap: anywhere;
-  text-overflow: ellipsis;
-  -webkit-box-orient: vertical;
   letter-spacing: 0;
 }
 
@@ -218,7 +215,6 @@ button {
   font-size: 17px;
   font-weight: 700;
   line-height: 1.26;
-  -webkit-line-clamp: 3;
 }
 
 .subtitle-block.translated p {
@@ -226,7 +222,6 @@ button {
   font-size: 19px;
   font-weight: 800;
   line-height: 1.24;
-  -webkit-line-clamp: 3;
 }
 
 .divider {

@@ -16,6 +16,12 @@ public class SentenceBoundaryDetector {
         return modelFinal;
     }
 
+    public boolean shouldFinishByDuration(SubtitleSegment segment, long currentTimeMs, long maxDurationMs) {
+        return segment != null
+            && segment.getStartedAtMs() != null
+            && currentTimeMs - segment.getStartedAtMs() >= maxDurationMs;
+    }
+
     public boolean canReviseFinalSegment(SubtitleSegment segment, String source, String translation) {
         return segment != null
             && Boolean.TRUE.equals(segment.getIsFinal())

@@ -20,4 +20,6 @@ public class RealtimeApiProperties {
     private String format = "pcm";
 
     private Integer maxEndSilence = 700;
+
+    private Long maxSegmentDurationMs = 3000L;
 }

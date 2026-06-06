@@ -9,10 +9,11 @@ export interface AudioChunkMessage {
   data: string
 }
 
-export interface AudioSentenceEndMessage {
-  type: 'audio.sentence_end'
+export interface AudioSilenceMessage {
+  type: 'audio.silence'
   sessionId: string
   timestamp: number
+  durationMs: number
 }
 
 export interface SubtitleUpdateMessage {
@@ -107,15 +108,16 @@ export class SubtitleWebSocketClient {
     this.socket.send(JSON.stringify(message))
   }
 
-  sendSentenceEnd(): void {
+  sendSilence(durationMs: number): void {
     if (this.socket?.readyState !== WebSocket.OPEN) {
       return
     }
 
-    const message: AudioSentenceEndMessage = {
-      type: 'audio.sentence_end',
+    const message: AudioSilenceMessage = {
+      type: 'audio.silence',
       sessionId: this.options.sessionId,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      durationMs
     }
 
     this.socket.send(JSON.stringify(message))

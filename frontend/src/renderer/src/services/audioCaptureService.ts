@@ -4,7 +4,7 @@ export type AudioCaptureState = 'idle' | 'requesting' | 'capturing' | 'fallback'
 interface AudioCaptureServiceOptions {
   mode: AudioCaptureMode
   onAudioChunk: (base64Pcm16: string, rms: number) => void
-  onSentenceEnd: () => void
+  onSilence: (durationMs: number) => void
   onStateChange: (state: AudioCaptureState, activeMode: AudioCaptureMode) => void
 }
 
@@ -161,7 +161,7 @@ export class AudioCaptureService {
     }
 
     this.sentenceEndSent = true
-    this.options.onSentenceEnd()
+    this.options.onSilence(this.silentDurationMs)
   }
 
   private calculateRms(samples: number[]): number {

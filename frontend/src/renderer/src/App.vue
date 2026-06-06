@@ -237,8 +237,8 @@ async function startAudioCapture(): Promise<void> {
       currentRms.value = rms
       websocketClient?.sendAudioChunk(base64Pcm16)
     },
-    onSentenceEnd: () => {
-      websocketClient?.sendSentenceEnd()
+    onSilence: (durationMs) => {
+      websocketClient?.sendSilence(durationMs)
     },
     onStateChange: (state, mode) => {
       captureState.value = state

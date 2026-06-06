@@ -170,8 +170,7 @@ public class RealtimeClient implements AutoCloseable {
         boolean modelFinal = result.isSentenceEnd()
             || Optional.ofNullable(transcriptionResult).map(TranscriptionResult::isSentenceEnd).orElse(false)
             || Optional.ofNullable(translation).map(Translation::isSentenceEnd).orElse(false);
-        boolean sentenceEnd = sentenceBoundaryDetector.shouldFinishByModelFinal(modelFinal)
-            || sentenceBoundaryDetector.shouldFinishByPunctuation(sourceText, translationText);
+        boolean sentenceEnd = sentenceBoundaryDetector.shouldFinishByModelFinal(modelFinal);
 
         updateSegment(transcriptionResult, translation, sourceText, translationText, sentenceEnd)
             .ifPresent(subtitleListener::onSubtitleUpdate);
@@ -188,17 +187,13 @@ public class RealtimeClient implements AutoCloseable {
         long currentTimeMs = System.currentTimeMillis();
 
         if (Boolean.TRUE.equals(segment.getIsFinal())) {
-            if (sentenceBoundaryDetector.canReviseFinalSegment(segment, sourceText, translationText, currentTimeMs)) {
+            if (sentenceBoundaryDetector.canReviseFinalSegment(segment, sourceText, translationText)) {
                 sentenceEnd = true;
             } else if (!sentenceEnd) {
                 segment = createAndActivateSegment();
             } else {
                 return Optional.empty();
             }
-        }
-
-        if (sentenceBoundaryDetector.shouldFinishByDuration(segment, currentTimeMs)) {
-            segment = createAndActivateSegment();
         }
 
         segment.setSource(sourceText);

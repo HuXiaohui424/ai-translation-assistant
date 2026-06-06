@@ -177,10 +177,6 @@ function handleSubtitleUpdate(message: SubtitleUpdateMessage): void {
     return
   }
 
-  if (existingSegment.isFinal && !message.isFinal) {
-    return
-  }
-
   segments.value = segments.value.map((segment, index) =>
     index === existingIndex ? nextSegment : segment
   )

@@ -24,15 +24,14 @@ class SentenceBoundaryDetectorTests {
         boolean canRevise = detector.canReviseFinalSegment(
             segment,
             "we need to optimize the database",
-            "我们需要优化数据库",
-            3_000L
+            "我们需要优化数据库"
         );
 
         assertThat(canRevise).isTrue();
     }
 
     @Test
-    void rejectsFinalSegmentRevisionAfterGraceWindow() {
+    void rejectsFinalSegmentRevisionWhenTextDoesNotChange() {
         SubtitleSegment segment = SubtitleSegment.builder()
             .segmentId("seg-1")
             .source("we need to optimize")
@@ -45,9 +44,8 @@ class SentenceBoundaryDetectorTests {
 
         boolean canRevise = detector.canReviseFinalSegment(
             segment,
-            "we need to optimize the database",
-            "我们需要优化数据库",
-            5_000L
+            "we need to optimize",
+            "我们需要优化"
         );
 
         assertThat(canRevise).isFalse();

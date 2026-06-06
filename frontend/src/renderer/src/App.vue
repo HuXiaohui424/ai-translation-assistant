@@ -28,13 +28,13 @@
 
       <div class="subtitle-content drag-region">
         <article class="subtitle-block original" aria-label="原文字幕">
-          <p>{{ currentCaption.original }}</p>
+          <p>{{ currentCaption.source }}</p>
         </article>
 
         <div class="divider" aria-hidden="true"></div>
 
         <article class="subtitle-block translated" aria-label="中文字幕">
-          <p>{{ currentCaption.translated }}</p>
+          <p>{{ currentCaption.translation }}</p>
         </article>
       </div>
 
@@ -47,68 +47,118 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import {
+  SubtitleWebSocketClient,
+  type SubtitleUpdateMessage,
+  type WebSocketConnectionState
+} from './services/websocketClient'
 
-type ConnectionStatus = 'connected' | 'paused'
+type DisplayConnectionStatus = WebSocketConnectionState | 'paused'
 
-interface Caption {
-  original: string
-  translated: string
+interface SubtitleSegment {
+  segmentId: string
+  revision: number
+  source: string
+  translation: string
+  isFinal: boolean
+  updatedAt: number
 }
 
-const captions: Caption[] = [
-  {
-    original: 'Welcome to the AI translation assistant. The floating subtitle window is ready.',
-    translated: '欢迎使用 AI 翻译助手，悬浮字幕窗已准备就绪。'
-  },
-  {
-    original: 'The original sentence appears above, and the Chinese translation appears below.',
-    translated: '上半部分显示原文，下半部分显示中文翻译。'
-  },
-  {
-    original: 'You can drag this window anywhere on the desktop while it stays above other windows.',
-    translated: '你可以把窗口拖到桌面任意位置，它会保持置顶显示。'
-  },
-  {
-    original: 'Use the play button to pause or resume simulated subtitle updates.',
-    translated: '使用开始或暂停按钮控制模拟字幕更新。'
-  }
-]
+const defaultCaption: SubtitleSegment = {
+  segmentId: 'waiting',
+  revision: 0,
+  source: 'Waiting for mock audio to reach the backend...',
+  translation: '等待模拟音频发送到后端...',
+  isFinal: false,
+  updatedAt: Date.now()
+}
 
-const currentIndex = ref(0)
+const sessionId = 'session-001'
+const segments = ref<SubtitleSegment[]>([defaultCaption])
 const isPlaying = ref(true)
-const latency = ref(38)
-const connectionStatus = ref<ConnectionStatus>('connected')
+const latency = ref(0)
+const connectionStatus = ref<DisplayConnectionStatus>('connecting')
 
-let captionTimer: number | undefined
-let latencyTimer: number | undefined
+let websocketClient: SubtitleWebSocketClient | undefined
 
-const currentCaption = computed(() => captions[currentIndex.value])
-
-const connectionStatusText = computed(() =>
-  connectionStatus.value === 'connected' ? '已连接' : '已暂停'
+const currentCaption = computed(() =>
+  segments.value.reduce((latestSegment, segment) =>
+    segment.updatedAt > latestSegment.updatedAt ? segment : latestSegment
+  )
 )
 
+const connectionStatusText = computed(() => {
+  const statusText: Record<DisplayConnectionStatus, string> = {
+    connecting: '连接中',
+    connected: '已连接',
+    disconnected: '未连接',
+    error: '连接异常',
+    paused: '已暂停'
+  }
+
+  return statusText[connectionStatus.value]
+})
+
 const connectionStatusClass = computed(() => ({
+  connecting: connectionStatus.value === 'connecting',
   connected: connectionStatus.value === 'connected',
+  disconnected: connectionStatus.value === 'disconnected',
+  error: connectionStatus.value === 'error',
   paused: connectionStatus.value === 'paused'
 }))
 
-function updateCaption(): void {
-  if (!isPlaying.value) {
+function handleSubtitleUpdate(message: SubtitleUpdateMessage): void {
+  const nextSegment: SubtitleSegment = {
+    segmentId: message.segmentId,
+    revision: message.revision,
+    source: message.source,
+    translation: message.translation,
+    isFinal: message.isFinal,
+    updatedAt: Date.now()
+  }
+
+  const existingIndex = segments.value.findIndex((segment) => segment.segmentId === message.segmentId)
+
+  if (existingIndex < 0) {
+    segments.value = [
+      ...segments.value.filter((segment) => segment.segmentId !== defaultCaption.segmentId),
+      nextSegment
+    ]
+    latency.value = message.latencyMs
     return
   }
 
-  currentIndex.value = (currentIndex.value + 1) % captions.length
+  const existingSegment = segments.value[existingIndex]
+
+  if (message.revision < existingSegment.revision) {
+    return
+  }
+
+  segments.value = segments.value.map((segment, index) =>
+    index === existingIndex ? nextSegment : segment
+  )
+  latency.value = message.latencyMs
 }
 
-function updateLatency(): void {
-  latency.value = isPlaying.value ? 28 + Math.floor(Math.random() * 56) : 0
+function handleConnectionStateChange(state: WebSocketConnectionState): void {
+  if (isPlaying.value) {
+    connectionStatus.value = state
+  }
 }
 
 function togglePlayback(): void {
   isPlaying.value = !isPlaying.value
-  connectionStatus.value = isPlaying.value ? 'connected' : 'paused'
-  updateLatency()
+
+  if (isPlaying.value) {
+    websocketClient?.connect()
+    websocketClient?.startMockAudio()
+    connectionStatus.value = websocketClient?.isConnected() ? 'connected' : 'connecting'
+    return
+  }
+
+  connectionStatus.value = 'paused'
+  latency.value = 0
+  websocketClient?.stopMockAudio()
 }
 
 function hideWindow(): void {
@@ -116,12 +166,18 @@ function hideWindow(): void {
 }
 
 onMounted(() => {
-  captionTimer = window.setInterval(updateCaption, 2800)
-  latencyTimer = window.setInterval(updateLatency, 1200)
+  websocketClient = new SubtitleWebSocketClient({
+    url: 'ws://localhost:8080/ws/audio',
+    sessionId,
+    onSubtitleUpdate: handleSubtitleUpdate,
+    onStateChange: handleConnectionStateChange
+  })
+
+  websocketClient.connect()
+  websocketClient.startMockAudio()
 })
 
 onBeforeUnmount(() => {
-  window.clearInterval(captionTimer)
-  window.clearInterval(latencyTimer)
+  websocketClient?.disconnect()
 })
 </script>

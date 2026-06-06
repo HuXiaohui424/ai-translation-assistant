@@ -18,4 +18,6 @@ public class SubtitleSegment {
     private Boolean isFinal;
 
     private Long startedAtMs;
+
+    private Long finalizedAtMs;
 }

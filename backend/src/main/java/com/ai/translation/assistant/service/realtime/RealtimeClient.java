@@ -198,16 +198,19 @@ public class RealtimeClient implements AutoCloseable {
         boolean sentenceEnd
     ) {
         SubtitleSegment segment = resolveSegment(transcriptionResult, translation);
+        long currentTimeMs = System.currentTimeMillis();
 
         if (Boolean.TRUE.equals(segment.getIsFinal())) {
-            if (!sentenceEnd) {
+            if (sentenceBoundaryDetector.canReviseFinalSegment(segment, sourceText, translationText, currentTimeMs)) {
+                sentenceEnd = true;
+            } else if (!sentenceEnd) {
                 segment = createAndActivateSegment();
             } else {
                 return Optional.empty();
             }
         }
 
-        if (sentenceBoundaryDetector.shouldFinishByDuration(segment, System.currentTimeMillis())) {
+        if (sentenceBoundaryDetector.shouldFinishByDuration(segment, currentTimeMs)) {
             segment = createAndActivateSegment();
         }
 
@@ -215,6 +218,10 @@ public class RealtimeClient implements AutoCloseable {
         segment.setTranslation(translationText);
         segment.setRevision(segment.getRevision() + 1);
         segment.setIsFinal(sentenceEnd);
+
+        if (sentenceEnd && segment.getFinalizedAtMs() == null) {
+            segment.setFinalizedAtMs(currentTimeMs);
+        }
 
         return Optional.of(SubtitleUpdateMessage.builder()
             .type("subtitle.update")
@@ -241,7 +248,7 @@ public class RealtimeClient implements AutoCloseable {
             });
         }
 
-        if (activeSegment == null || Boolean.TRUE.equals(activeSegment.getIsFinal()) || nextResultStartsNewSegment) {
+        if (activeSegment == null || nextResultStartsNewSegment) {
             nextResultStartsNewSegment = false;
             activeSegment = createSegment();
         }
@@ -263,6 +270,7 @@ public class RealtimeClient implements AutoCloseable {
             .revision(0)
             .isFinal(false)
             .startedAtMs(System.currentTimeMillis())
+            .finalizedAtMs(null)
             .build();
     }
 

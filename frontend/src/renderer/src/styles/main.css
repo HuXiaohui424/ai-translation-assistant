@@ -110,9 +110,20 @@ button {
   box-shadow: 0 0 14px rgba(34, 197, 94, 0.72);
 }
 
+.status-pill.connecting .status-dot {
+  background: #38bdf8;
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.62);
+}
+
 .status-pill.paused .status-dot {
   background: #f59e0b;
   box-shadow: 0 0 14px rgba(245, 158, 11, 0.62);
+}
+
+.status-pill.disconnected .status-dot,
+.status-pill.error .status-dot {
+  background: #ef4444;
+  box-shadow: 0 0 14px rgba(239, 68, 68, 0.58);
 }
 
 .control-button,

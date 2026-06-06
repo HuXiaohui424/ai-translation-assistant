@@ -173,7 +173,7 @@ function handleSubtitleUpdate(message: SubtitleUpdateMessage): void {
 
   const existingSegment = segments.value[existingIndex]
 
-  if (message.revision < existingSegment.revision) {
+  if (existingSegment.isFinal || message.revision <= existingSegment.revision) {
     return
   }
 

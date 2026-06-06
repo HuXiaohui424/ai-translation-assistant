@@ -1,6 +1,7 @@
 package com.ai.translation.assistant.service.realtime;
 
 import com.ai.translation.assistant.config.RealtimeApiProperties;
+import com.ai.translation.assistant.domain.subtitle.SubtitleSegment;
 import com.ai.translation.assistant.domain.websocket.AudioChunkMessage;
 import com.ai.translation.assistant.domain.websocket.RealtimeStatusMessage;
 import com.ai.translation.assistant.domain.websocket.SubtitleUpdateMessage;
@@ -14,8 +15,10 @@ import com.alibaba.dashscope.common.Status;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
@@ -33,8 +36,10 @@ public class RealtimeClient implements AutoCloseable {
     private final RealtimeStatusListener statusListener;
     private final TranslationRecognizerRealtime recognizer;
     private final AtomicBoolean started = new AtomicBoolean(false);
-    private final AtomicInteger revision = new AtomicInteger();
+    private final AtomicInteger segmentSequence = new AtomicInteger();
+    private final Map<String, SubtitleSegment> sentenceSegments = new ConcurrentHashMap<>();
 
+    private volatile SubtitleSegment activeSegment;
     private volatile long latestAudioTimestamp = System.currentTimeMillis();
 
     public RealtimeClient(
@@ -164,30 +169,80 @@ public class RealtimeClient implements AutoCloseable {
             || Optional.ofNullable(transcriptionResult).map(TranscriptionResult::isSentenceEnd).orElse(false)
             || Optional.ofNullable(translation).map(Translation::isSentenceEnd).orElse(false);
 
-        SubtitleUpdateMessage subtitleUpdateMessage = SubtitleUpdateMessage.builder()
-            .type("subtitle.update")
-            .sessionId(sessionId)
-            .segmentId(buildSegmentId(transcriptionResult, translation))
-            .revision(revision.incrementAndGet())
-            .source(sourceText)
-            .translation(translationText)
-            .isFinal(sentenceEnd)
-            .latencyMs(Duration.ofMillis(Math.max(0, System.currentTimeMillis() - latestAudioTimestamp)).toMillis())
-            .build();
-
-        subtitleListener.onSubtitleUpdate(subtitleUpdateMessage);
+        updateSegment(transcriptionResult, translation, sourceText, translationText, sentenceEnd)
+            .ifPresent(subtitleListener::onSubtitleUpdate);
     }
 
-    private String buildSegmentId(TranscriptionResult transcriptionResult, Translation translation) {
+    private synchronized Optional<SubtitleUpdateMessage> updateSegment(
+        TranscriptionResult transcriptionResult,
+        Translation translation,
+        String sourceText,
+        String translationText,
+        boolean sentenceEnd
+    ) {
+        SubtitleSegment segment = resolveSegment(transcriptionResult, translation);
+
+        if (Boolean.TRUE.equals(segment.getIsFinal())) {
+            return Optional.empty();
+        }
+
+        segment.setSource(sourceText);
+        segment.setTranslation(translationText);
+        segment.setRevision(segment.getRevision() + 1);
+        segment.setIsFinal(sentenceEnd);
+
+        return Optional.of(SubtitleUpdateMessage.builder()
+            .type("subtitle.update")
+            .sessionId(sessionId)
+            .segmentId(segment.getSegmentId())
+            .revision(segment.getRevision())
+            .source(segment.getSource())
+            .translation(segment.getTranslation())
+            .isFinal(segment.getIsFinal())
+            .latencyMs(Duration.ofMillis(Math.max(0, System.currentTimeMillis() - latestAudioTimestamp)).toMillis())
+            .build());
+    }
+
+    private SubtitleSegment resolveSegment(TranscriptionResult transcriptionResult, Translation translation) {
+        String sentenceKey = buildSentenceKey(transcriptionResult, translation);
+
+        if (sentenceKey != null) {
+            return sentenceSegments.computeIfAbsent(sentenceKey, ignored -> {
+                if (activeSegment != null && !Boolean.TRUE.equals(activeSegment.getIsFinal())) {
+                    return activeSegment;
+                }
+
+                return createSegment();
+            });
+        }
+
+        if (activeSegment == null || Boolean.TRUE.equals(activeSegment.getIsFinal())) {
+            activeSegment = createSegment();
+        }
+
+        return activeSegment;
+    }
+
+    private SubtitleSegment createSegment() {
+        return SubtitleSegment.builder()
+            .segmentId("seg-" + segmentSequence.incrementAndGet())
+            .source("")
+            .translation("")
+            .revision(0)
+            .isFinal(false)
+            .build();
+    }
+
+    private String buildSentenceKey(TranscriptionResult transcriptionResult, Translation translation) {
         Long sentenceId = Optional.ofNullable(transcriptionResult)
             .map(TranscriptionResult::getSentenceId)
             .filter(Objects::nonNull)
             .orElseGet(() -> Optional.ofNullable(translation).map(Translation::getSentenceId).orElse(null));
 
         if (sentenceId == null) {
-            return "seg-active";
+            return null;
         }
 
-        return "seg-" + sentenceId;
+        return "sentence-" + sentenceId;
     }
 }

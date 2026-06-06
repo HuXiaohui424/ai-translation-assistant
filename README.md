@@ -28,14 +28,17 @@ service/
 
 后端：
 
-```bash
+```powershell
 cd backend
+$env:DASHSCOPE_API_KEY="你的阿里云 DashScope API Key"
 mvn spring-boot:run
 ```
 
+实时识别依赖阿里云 `gummy-realtime-v1`，后端启动时必须配置 `DASHSCOPE_API_KEY`。如果没有配置，前端仍会保持 WebSocket 连接，但 AI 状态会显示异常并提示缺少 API Key。
+
 前端：
 
-```bash
+```powershell
 cd frontend
 npm install
 npm run dev

@@ -73,6 +73,7 @@ import {
 } from './services/audioCaptureService'
 import {
   SubtitleWebSocketClient,
+  type RealtimeStatusMessage,
   type SubtitleUpdateMessage,
   type WebSocketConnectionState
 } from './services/websocketClient'
@@ -188,6 +189,19 @@ function handleConnectionStateChange(state: WebSocketConnectionState): void {
   }
 }
 
+function handleRealtimeStatus(message: RealtimeStatusMessage): void {
+  if (message.status === 'error') {
+    segments.value = [{
+      segmentId: 'realtime-error',
+      revision: Date.now(),
+      source: message.message,
+      translation: '实时识别服务暂不可用，请检查后端 API Key、网络或模型配置。',
+      isFinal: true,
+      updatedAt: Date.now()
+    }]
+  }
+}
+
 async function togglePlayback(): Promise<void> {
   isPlaying.value = !isPlaying.value
 
@@ -248,6 +262,7 @@ onMounted(() => {
     url: 'ws://localhost:8080/ws/audio',
     sessionId,
     onSubtitleUpdate: handleSubtitleUpdate,
+    onRealtimeStatus: handleRealtimeStatus,
     onStateChange: handleConnectionStateChange
   })
 

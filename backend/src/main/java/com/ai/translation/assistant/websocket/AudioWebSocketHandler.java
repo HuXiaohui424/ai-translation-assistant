@@ -1,16 +1,19 @@
 package com.ai.translation.assistant.websocket;
 
 import com.ai.translation.assistant.domain.websocket.AudioChunkMessage;
+import com.ai.translation.assistant.domain.websocket.RealtimeStatusMessage;
 import com.ai.translation.assistant.domain.websocket.SubtitleUpdateMessage;
+import com.ai.translation.assistant.service.realtime.RealtimeSessionService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
 import java.io.IOException;
-import java.time.Duration;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -19,27 +22,16 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class AudioWebSocketHandler extends TextWebSocketHandler {
 
     private static final String AUDIO_CHUNK_TYPE = "audio.chunk";
     private static final String AUDIO_SENTENCE_END_TYPE = "audio.sentence_end";
-    private static final String SUBTITLE_UPDATE_TYPE = "subtitle.update";
-    private static final String[] MOCK_SOURCE_TEXTS = {
-        "we need to optimize the database query",
-        "the floating subtitle window receives updates in real time",
-        "each segment keeps the newest revision from the backend",
-        "the websocket protocol is ready for audio streaming"
-    };
-    private static final String[] MOCK_TRANSLATION_TEXTS = {
-        "我们需要优化数据库查询",
-        "悬浮字幕窗会实时接收更新",
-        "每个字幕片段都会保留后端返回的最新版本",
-        "WebSocket 通信协议已准备好承载音频流"
-    };
 
     private final ObjectMapper objectMapper;
     private final Validator validator;
-    private final AtomicInteger sequence = new AtomicInteger();
+    private final RealtimeSessionService realtimeSessionService;
+    private final ConcurrentMap<String, String> websocketSessionIds = new ConcurrentHashMap<>();
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws IOException {
@@ -53,8 +45,11 @@ public class AudioWebSocketHandler extends TextWebSocketHandler {
         }
 
         String messageType = payloadNode.path("type").asText();
+        String sessionId = payloadNode.path("sessionId").asText();
 
         if (AUDIO_SENTENCE_END_TYPE.equals(messageType)) {
+            websocketSessionIds.put(session.getId(), sessionId);
+            realtimeSessionService.sendSentenceEnd(sessionId);
             return;
         }
 
@@ -79,21 +74,56 @@ public class AudioWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
-        int currentSequence = sequence.incrementAndGet();
-        int mockIndex = Math.floorMod(currentSequence - 1, MOCK_SOURCE_TEXTS.length);
-        int segmentNumber = Math.floorMod(currentSequence - 1, 2) + 1;
+        websocketSessionIds.put(session.getId(), audioChunkMessage.getSessionId());
+        try {
+            realtimeSessionService.forwardAudioChunk(
+                audioChunkMessage,
+                subtitleUpdateMessage -> sendMessage(session, subtitleUpdateMessage),
+                statusMessage -> sendMessage(session, statusMessage)
+            );
+        } catch (RuntimeException exception) {
+            log.warn("Realtime service failed, sessionId={}", audioChunkMessage.getSessionId(), exception);
+            realtimeSessionService.closeSession(audioChunkMessage.getSessionId());
+            sendMessage(session, RealtimeStatusMessage.builder()
+                .type("realtime.status")
+                .sessionId(audioChunkMessage.getSessionId())
+                .status("error")
+                .message(buildRealtimeErrorMessage(exception))
+                .build());
+        }
+    }
 
-        SubtitleUpdateMessage subtitleUpdateMessage = SubtitleUpdateMessage.builder()
-            .type(SUBTITLE_UPDATE_TYPE)
-            .sessionId(audioChunkMessage.getSessionId())
-            .segmentId("seg-" + segmentNumber)
-            .revision(currentSequence)
-            .source(MOCK_SOURCE_TEXTS[mockIndex])
-            .translation(MOCK_TRANSLATION_TEXTS[mockIndex])
-            .isFinal(currentSequence % 4 == 0)
-            .latencyMs(Duration.ofMillis(Math.max(0, System.currentTimeMillis() - audioChunkMessage.getTimestamp())).toMillis())
-            .build();
+    @Override
+    public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        String sessionId = websocketSessionIds.remove(session.getId());
 
-        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(subtitleUpdateMessage)));
+        if (sessionId != null) {
+            realtimeSessionService.closeSession(sessionId);
+        }
+    }
+
+    private void sendMessage(WebSocketSession session, Object outgoingMessage) {
+        if (!session.isOpen()) {
+            return;
+        }
+
+        try {
+            synchronized (session) {
+                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(outgoingMessage)));
+            }
+        } catch (IOException exception) {
+            websocketSessionIds.computeIfPresent(session.getId(), (websocketSessionId, realtimeSessionId) -> {
+                realtimeSessionService.closeSession(realtimeSessionId);
+                return null;
+            });
+        }
+    }
+
+    private String buildRealtimeErrorMessage(RuntimeException exception) {
+        if (exception instanceof IllegalStateException) {
+            return "后端未配置 DASHSCOPE_API_KEY，实时识别未启动";
+        }
+
+        return "实时识别服务不可用，请检查 API Key、网络或模型配置";
     }
 }

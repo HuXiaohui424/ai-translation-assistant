@@ -26,10 +26,18 @@ export interface SubtitleUpdateMessage {
   latencyMs: number
 }
 
+export interface RealtimeStatusMessage {
+  type: 'realtime.status'
+  sessionId: string
+  status: 'connecting' | 'connected' | 'completed' | 'error'
+  message: string
+}
+
 interface WebSocketClientOptions {
   url: string
   sessionId: string
   onSubtitleUpdate: (message: SubtitleUpdateMessage) => void
+  onRealtimeStatus: (message: RealtimeStatusMessage) => void
   onStateChange: (state: WebSocketConnectionState) => void
 }
 
@@ -118,19 +126,22 @@ export class SubtitleWebSocketClient {
       return
     }
 
-    let message: SubtitleUpdateMessage
+    let message: SubtitleUpdateMessage | RealtimeStatusMessage
 
     try {
-      message = JSON.parse(data) as SubtitleUpdateMessage
+      message = JSON.parse(data) as SubtitleUpdateMessage | RealtimeStatusMessage
     } catch {
       return
     }
 
-    if (message.type !== 'subtitle.update') {
+    if (message.type === 'subtitle.update') {
+      this.options.onSubtitleUpdate(message)
       return
     }
 
-    this.options.onSubtitleUpdate(message)
+    if (message.type === 'realtime.status') {
+      this.options.onRealtimeStatus(message)
+    }
   }
 
   private scheduleReconnect(): void {

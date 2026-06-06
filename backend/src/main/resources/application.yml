@@ -10,3 +10,13 @@ management:
     web:
       exposure:
         include: health,info
+
+aliyun:
+  realtime:
+    api-key: ${DASHSCOPE_API_KEY:}
+    model: gummy-realtime-v1
+    source-language: en
+    target-language: zh
+    sample-rate: 16000
+    format: pcm
+    max-end-silence: 700

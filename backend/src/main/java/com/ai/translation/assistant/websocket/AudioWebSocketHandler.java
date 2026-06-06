@@ -13,6 +13,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -21,6 +22,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class AudioWebSocketHandler extends TextWebSocketHandler {
 
     private static final String AUDIO_CHUNK_TYPE = "audio.chunk";
@@ -80,12 +82,13 @@ public class AudioWebSocketHandler extends TextWebSocketHandler {
                 statusMessage -> sendMessage(session, statusMessage)
             );
         } catch (RuntimeException exception) {
+            log.warn("Realtime service failed, sessionId={}", audioChunkMessage.getSessionId(), exception);
             realtimeSessionService.closeSession(audioChunkMessage.getSessionId());
             sendMessage(session, RealtimeStatusMessage.builder()
                 .type("realtime.status")
                 .sessionId(audioChunkMessage.getSessionId())
                 .status("error")
-                .message("实时识别服务不可用，请检查 API Key、网络或模型配置")
+                .message(buildRealtimeErrorMessage(exception))
                 .build());
         }
     }
@@ -114,5 +117,13 @@ public class AudioWebSocketHandler extends TextWebSocketHandler {
                 return null;
             });
         }
+    }
+
+    private String buildRealtimeErrorMessage(RuntimeException exception) {
+        if (exception instanceof IllegalStateException) {
+            return "后端未配置 DASHSCOPE_API_KEY，实时识别未启动";
+        }
+
+        return "实时识别服务不可用，请检查 API Key、网络或模型配置";
     }
 }

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dist-electron/
+out/
+target/
+.idea/
+.vscode/
+*.iml
+*.log
+*.local
+.DS_Store

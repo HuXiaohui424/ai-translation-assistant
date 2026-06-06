@@ -43,6 +43,7 @@ public class RealtimeClient implements AutoCloseable {
     private final Map<String, SubtitleSegment> sentenceSegments = new ConcurrentHashMap<>();
 
     private volatile SubtitleSegment activeSegment;
+    private volatile boolean nextResultStartsNewSegment = false;
     private volatile long latestAudioTimestamp = System.currentTimeMillis();
 
     public RealtimeClient(
@@ -82,7 +83,8 @@ public class RealtimeClient implements AutoCloseable {
             return Optional.empty();
         }
 
-        return finishActiveSegment();
+        nextResultStartsNewSegment = hasDisplayableText(activeSegment);
+        return Optional.empty();
     }
 
     @Override
@@ -198,13 +200,15 @@ public class RealtimeClient implements AutoCloseable {
         SubtitleSegment segment = resolveSegment(transcriptionResult, translation);
 
         if (Boolean.TRUE.equals(segment.getIsFinal())) {
-            return Optional.empty();
+            if (!sentenceEnd) {
+                segment = createAndActivateSegment();
+            } else {
+                return Optional.empty();
+            }
         }
 
         if (sentenceBoundaryDetector.shouldFinishByDuration(segment, System.currentTimeMillis())) {
-            segment.setIsFinal(true);
-            activeSegment = createSegment();
-            segment = activeSegment;
+            segment = createAndActivateSegment();
         }
 
         segment.setSource(sourceText);
@@ -224,29 +228,6 @@ public class RealtimeClient implements AutoCloseable {
             .build());
     }
 
-    private synchronized Optional<SubtitleUpdateMessage> finishActiveSegment() {
-        if (activeSegment == null || Boolean.TRUE.equals(activeSegment.getIsFinal())) {
-            return Optional.empty();
-        }
-
-        activeSegment.setRevision(activeSegment.getRevision() + 1);
-        activeSegment.setIsFinal(true);
-
-        SubtitleUpdateMessage subtitleUpdateMessage = SubtitleUpdateMessage.builder()
-            .type("subtitle.update")
-            .sessionId(sessionId)
-            .segmentId(activeSegment.getSegmentId())
-            .revision(activeSegment.getRevision())
-            .source(activeSegment.getSource())
-            .translation(activeSegment.getTranslation())
-            .isFinal(true)
-            .latencyMs(Duration.ofMillis(Math.max(0, System.currentTimeMillis() - latestAudioTimestamp)).toMillis())
-            .build();
-
-        activeSegment = createSegment();
-        return Optional.of(subtitleUpdateMessage);
-    }
-
     private SubtitleSegment resolveSegment(TranscriptionResult transcriptionResult, Translation translation) {
         String sentenceKey = buildSentenceKey(transcriptionResult, translation);
 
@@ -260,10 +241,17 @@ public class RealtimeClient implements AutoCloseable {
             });
         }
 
-        if (activeSegment == null || Boolean.TRUE.equals(activeSegment.getIsFinal())) {
+        if (activeSegment == null || Boolean.TRUE.equals(activeSegment.getIsFinal()) || nextResultStartsNewSegment) {
+            nextResultStartsNewSegment = false;
             activeSegment = createSegment();
         }
 
+        return activeSegment;
+    }
+
+    private SubtitleSegment createAndActivateSegment() {
+        nextResultStartsNewSegment = false;
+        activeSegment = createSegment();
         return activeSegment;
     }
 
@@ -276,6 +264,11 @@ public class RealtimeClient implements AutoCloseable {
             .isFinal(false)
             .startedAtMs(System.currentTimeMillis())
             .build();
+    }
+
+    private boolean hasDisplayableText(SubtitleSegment segment) {
+        return segment != null
+            && (StringUtils.hasText(segment.getSource()) || StringUtils.hasText(segment.getTranslation()));
     }
 
     private String buildSentenceKey(TranscriptionResult transcriptionResult, Translation translation) {

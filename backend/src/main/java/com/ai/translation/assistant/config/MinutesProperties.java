@@ -7,6 +7,9 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
+/**
+ * 会议纪要模型调用及输入限制参数。
+ */
 @Data
 @Validated
 @ConfigurationProperties(prefix = "aliyun.minutes")

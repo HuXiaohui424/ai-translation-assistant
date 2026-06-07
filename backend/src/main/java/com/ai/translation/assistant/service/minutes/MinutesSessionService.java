@@ -22,6 +22,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+/**
+ * 缓存会话内最终字幕，并异步生成带版本号的结构化会议纪要。
+ */
 @Service
 @RequiredArgsConstructor
 public class MinutesSessionService {
@@ -47,6 +50,7 @@ public class MinutesSessionService {
         synchronized (state) {
             CachedSubtitleSegment existingSegment = state.segments.get(message.getSegmentId());
 
+            // 忽略乱序或重复推送，确保缓存始终保留片段的最新修订。
             if (existingSegment != null && message.getRevision() <= existingSegment.getRevision()) {
                 return;
             }
@@ -70,11 +74,13 @@ public class MinutesSessionService {
             return;
         }
 
+        // 同一会话只允许一个生成任务运行，防止重复调用模型。
         if (!state.generating.compareAndSet(false, true)) {
             minutesSender.accept(buildGeneratingUpdate(sessionId, state.revision.get()));
             return;
         }
 
+        // 仅被实际受理的生成请求递增版本，便于前端丢弃过期结果。
         int nextRevision = state.revision.incrementAndGet();
         minutesSender.accept(buildGeneratingUpdate(sessionId, nextRevision));
 
@@ -100,6 +106,7 @@ public class MinutesSessionService {
     }
 
     private List<CachedSubtitleSegment> snapshotSegments(MinutesSessionState state) {
+        // 生成过程使用稳定快照，不阻塞后续字幕继续写入会话缓存。
         synchronized (state) {
             return state.segments.values().stream()
                 .sorted(Comparator.comparing(CachedSubtitleSegment::getUpdatedAtMs))
@@ -127,6 +134,7 @@ public class MinutesSessionService {
             return value;
         }
 
+        // 超限时保留最近内容，使纪要更贴近会议当前阶段。
         return value.substring(value.length() - maxLength);
     }
 

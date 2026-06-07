@@ -15,6 +15,9 @@ const SILENCE_RMS_THRESHOLD = 0.012
 const SENTENCE_END_SILENCE_MS = 700
 const TRAILING_AUDIO_GRACE_MS = 700
 
+/**
+ * 采集系统或麦克风音频，并输出固定规格的 PCM16 音频块和静音边界。
+ */
 export class AudioCaptureService {
   private stream?: MediaStream
   private audioContext?: AudioContext
@@ -44,6 +47,7 @@ export class AudioCaptureService {
         throw new Error('Microphone audio capture failed')
       }
 
+      // 系统回环不可用时自动退回麦克风，保证采集链路仍可使用。
       this.options.onStateChange('fallback', 'microphone')
       this.stream = await this.createStream('microphone')
       this.activeMode = 'microphone'
@@ -77,6 +81,7 @@ export class AudioCaptureService {
 
   private async createStream(mode: AudioCaptureMode): Promise<MediaStream> {
     if (mode === 'system') {
+      // Electron 的系统音频捕获依赖 display media，获取后立即释放无用的视频轨道。
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         audio: true,
         video: true
@@ -109,6 +114,8 @@ export class AudioCaptureService {
     this.sourceNode = this.audioContext.createMediaStreamSource(stream)
     this.processorNode = this.audioContext.createScriptProcessor(4096, 1, 1)
     this.outputGainNode = this.audioContext.createGain()
+
+    // ScriptProcessorNode 需要连接输出端才能持续回调，静音增益可避免声音回放。
     this.outputGainNode.gain.value = 0
 
     this.processorNode.onaudioprocess = (event) => {
@@ -131,6 +138,7 @@ export class AudioCaptureService {
     const ratio = sourceSampleRate / TARGET_SAMPLE_RATE
     const targetLength = Math.floor(samples.length / ratio)
 
+    // 线性插值将设备采样率统一为后端要求的 16 kHz。
     for (let index = 0; index < targetLength; index += 1) {
       const sourceIndex = index * ratio
       const lowerIndex = Math.floor(sourceIndex)
@@ -141,6 +149,7 @@ export class AudioCaptureService {
   }
 
   private flushAudioChunks(): void {
+    // 按 100 ms 切块，不足一块的样本保留到下一次音频回调。
     while (this.outputSamples.length >= TARGET_CHUNK_SAMPLES) {
       const chunk = this.outputSamples.splice(0, TARGET_CHUNK_SAMPLES)
       const rms = this.calculateRms(chunk)
@@ -160,11 +169,13 @@ export class AudioCaptureService {
   private handleSilentChunk(chunk: number[], rms: number): void {
     this.silentDurationMs += CHUNK_DURATION_MS
 
+    // 句尾短静音仍发送给模型，避免截断最后一个音节。
     if (this.hasRecentSpeech && this.silentDurationMs <= TRAILING_AUDIO_GRACE_MS) {
       this.options.onAudioChunk(this.toPcm16Base64(chunk), rms)
       return
     }
 
+    // 每段连续静音只上报一次句尾边界。
     if (this.silentDurationMs < SENTENCE_END_SILENCE_MS || this.sentenceEndSent) {
       return
     }
@@ -183,6 +194,7 @@ export class AudioCaptureService {
     const pcmBuffer = new ArrayBuffer(samples.length * Int16Array.BYTES_PER_ELEMENT)
     const pcmView = new DataView(pcmBuffer)
 
+    // 服务端协议使用小端有符号 PCM16。
     samples.forEach((sample, index) => {
       const clampedSample = Math.max(-1, Math.min(1, sample))
       const int16Sample = clampedSample < 0 ? clampedSample * 0x8000 : clampedSample * 0x7fff

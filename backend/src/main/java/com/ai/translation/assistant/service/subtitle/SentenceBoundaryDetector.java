@@ -4,6 +4,9 @@ import com.ai.translation.assistant.domain.subtitle.SubtitleSegment;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+/**
+ * 集中定义字幕片段结束和最终结果修订的判定规则。
+ */
 @Component
 public class SentenceBoundaryDetector {
 

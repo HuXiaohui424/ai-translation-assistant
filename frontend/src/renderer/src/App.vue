@@ -255,6 +255,7 @@ const emptyMinutesState: MinutesState = {
 
 const websocketUrl =
     import.meta.env.VITE_SUBTITLE_WS_URL ?? "ws://localhost:8080/ws/audio";
+// 单次窗口生命周期内复用会话 ID，关联音频、字幕与纪要消息。
 const sessionId = window.crypto.randomUUID();
 const segments = ref<SubtitleSegment[]>([defaultCaption]);
 const activeView = ref<ActiveView>("subtitle");
@@ -410,6 +411,7 @@ function handleSubtitleUpdate(message: SubtitleUpdateMessage): void {
 
     const existingSegment = segments.value[existingIndex];
 
+    // 服务端可能异步推送同一片段，只接受更高版本以避免界面回退。
     if (message.revision <= existingSegment.revision) {
         return;
     }
@@ -421,6 +423,7 @@ function handleSubtitleUpdate(message: SubtitleUpdateMessage): void {
 }
 
 function handleMinutesUpdate(message: MinutesUpdateMessage): void {
+    // 忽略晚到的旧任务结果，确保较新的生成状态不会被覆盖。
     if (message.revision < minutesState.value.revision) {
         return;
     }
@@ -585,6 +588,7 @@ function takeReadableTail(text: string, maxLength: number): string {
         normalizedText.lastIndexOf("；"),
     );
 
+    // 优先从末尾最近的标点切分，减少字幕从词语中间截断。
     if (
         boundaryIndex >= normalizedText.length - maxLength &&
         boundaryIndex < normalizedText.length - 1
@@ -617,6 +621,7 @@ async function togglePlayback(): Promise<void> {
     isTranslating.value = false;
     latency.value = 0;
     currentRms.value = 0;
+    // 暂停时同时终止采集和连接，防止后台继续缓存音频。
     await audioCaptureService?.stop();
     websocketClient?.disconnect();
 }
@@ -632,6 +637,7 @@ async function changeCaptureMode(mode: AudioCaptureMode): Promise<void> {
 }
 
 async function startAudioCapture(): Promise<void> {
+    // 切换采集模式时重建完整音频图，避免旧设备轨道继续占用。
     await audioCaptureService?.stop();
 
     audioCaptureService = new AudioCaptureService({
@@ -667,6 +673,7 @@ function closeWindow(): void {
 }
 
 function markTranslating(): void {
+    // 每次字幕更新都会延长提示时间，避免翻译状态频繁闪烁。
     isTranslating.value = true;
     window.clearTimeout(translatingResetTimer);
     translatingResetTimer = window.setTimeout(() => {
@@ -689,6 +696,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+    // 释放定时器、媒体轨道和连接，避免窗口重建后残留资源。
     window.clearTimeout(translatingResetTimer);
     void audioCaptureService?.stop();
     websocketClient?.disconnect();

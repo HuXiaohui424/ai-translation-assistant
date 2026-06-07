@@ -14,6 +14,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
 
+/**
+ * 调用 DashScope OpenAI 兼容接口，将字幕转写转换为结构化会议纪要。
+ */
 @Component
 @RequiredArgsConstructor
 public class MinutesAiClient implements MinutesGenerator {
@@ -57,6 +60,7 @@ public class MinutesAiClient implements MinutesGenerator {
             MinutesDraft draft = objectMapper.readValue(content, MinutesDraft.class);
             return normalizeDraft(draft);
         } catch (Exception exception) {
+            // 模型未返回合法 JSON 时仍保留原始内容，避免整次生成结果丢失。
             return MinutesDraft.builder()
                 .title("会议纪要")
                 .summary(content)

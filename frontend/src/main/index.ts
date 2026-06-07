@@ -15,6 +15,9 @@ const isDevelopment = Boolean(process.env.ELECTRON_RENDERER_URL);
 
 let mainWindow: BrowserWindow | null = null;
 
+/**
+ * 兼容开发构建与生产构建生成的不同预加载脚本扩展名。
+ */
 function resolvePreloadPath(): string {
     const preloadModulePath = join(__dirname, "../preload/index.mjs");
 
@@ -41,6 +44,7 @@ function registerDisplayMediaHandler(): void {
                 return;
             }
 
+            // Electron 在 Windows 上通过 loopback 捕获系统输出音频。
             callback({
                 video: sources[0],
                 audio: "loopback",
@@ -79,6 +83,7 @@ function createMainWindow(): void {
         mainWindow = null;
     });
 
+    // 外部链接交给系统浏览器打开，禁止在悬浮窗内创建新窗口。
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
         shell.openExternal(url);
         return { action: "deny" };
@@ -100,6 +105,7 @@ ipcMain.on("subtitle-window:close", () => {
     quitApplication();
 });
 
+// 文件写入仅在主进程执行，渲染进程通过受控 IPC 请求保存。
 ipcMain.handle("minutes-file:save", async (event, markdown: string) => {
     if (typeof markdown !== "string" || markdown.trim().length === 0) {
         return {
@@ -113,6 +119,7 @@ ipcMain.handle("minutes-file:save", async (event, markdown: string) => {
     const wasAlwaysOnTop = targetWindow?.isAlwaysOnTop() ?? false;
 
     try {
+        // 保存对话框打开期间临时取消置顶，避免系统窗口被悬浮窗遮挡。
         targetWindow?.focus();
         targetWindow?.setAlwaysOnTop(false);
 

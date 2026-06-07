@@ -10,6 +10,9 @@ import java.util.function.Consumer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+/**
+ * 按业务会话复用实时识别客户端，并统一管理客户端生命周期。
+ */
 @Service
 @RequiredArgsConstructor
 public class RealtimeSessionService {
@@ -22,6 +25,7 @@ public class RealtimeSessionService {
         Consumer<SubtitleUpdateMessage> subtitleSender,
         Consumer<RealtimeStatusMessage> statusSender
     ) {
+        // 首个音频块到达时才创建云端连接，避免为空会话预占资源。
         RealtimeClient realtimeClient = realtimeClients.computeIfAbsent(
             message.getSessionId(),
             sessionId -> realtimeClientFactory.create(sessionId, subtitleSender::accept, statusSender::accept)

@@ -7,6 +7,9 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
+/**
+ * 阿里云实时识别、字幕分段及连接重试参数。
+ */
 @Data
 @Validated
 @ConfigurationProperties(prefix = "aliyun.realtime")

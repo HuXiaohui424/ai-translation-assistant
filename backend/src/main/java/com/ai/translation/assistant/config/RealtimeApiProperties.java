@@ -22,4 +22,10 @@ public class RealtimeApiProperties {
     private Integer maxEndSilence = 700;
 
     private Long maxSegmentDurationMs = 3000L;
+
+    private Integer reconnectMaxAttempts = 5;
+
+    private Long reconnectInitialDelayMs = 1000L;
+
+    private Long reconnectMaxDelayMs = 10000L;
 }

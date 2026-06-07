@@ -21,3 +21,6 @@ aliyun:
     format: pcm
     max-end-silence: 700
     max-segment-duration-ms: 3000
+    reconnect-max-attempts: 5
+    reconnect-initial-delay-ms: 1000
+    reconnect-max-delay-ms: 10000

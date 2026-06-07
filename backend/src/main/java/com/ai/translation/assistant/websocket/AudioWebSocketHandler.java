@@ -2,6 +2,7 @@ package com.ai.translation.assistant.websocket;
 
 import com.ai.translation.assistant.domain.websocket.AudioChunkMessage;
 import com.ai.translation.assistant.domain.websocket.AudioSilenceMessage;
+import com.ai.translation.assistant.domain.websocket.RealtimeConnectionStatus;
 import com.ai.translation.assistant.domain.websocket.RealtimeStatusMessage;
 import com.ai.translation.assistant.domain.websocket.SubtitleUpdateMessage;
 import com.ai.translation.assistant.service.realtime.RealtimeSessionService;
@@ -96,7 +97,7 @@ public class AudioWebSocketHandler extends TextWebSocketHandler {
             sendMessage(session, RealtimeStatusMessage.builder()
                 .type("realtime.status")
                 .sessionId(audioChunkMessage.getSessionId())
-                .status("error")
+                .status(RealtimeConnectionStatus.ERROR)
                 .message(buildRealtimeErrorMessage(exception))
                 .build());
         }

@@ -34,15 +34,35 @@ export interface RealtimeStatusMessage {
   message: string
 }
 
+export interface MinutesGenerateMessage {
+  type: 'minutes.generate'
+  sessionId: string
+}
+
+export interface MinutesUpdateMessage {
+  type: 'minutes.update'
+  sessionId: string
+  revision: number
+  status: 'generating' | 'ready' | 'error'
+  title?: string
+  summary?: string
+  keyPoints: string[]
+  decisions: string[]
+  actionItems: string[]
+  updatedAtMs: number
+  errorMessage?: string
+}
+
 interface WebSocketClientOptions {
   url: string
   sessionId: string
   onSubtitleUpdate: (message: SubtitleUpdateMessage) => void
   onRealtimeStatus: (message: RealtimeStatusMessage) => void
+  onMinutesUpdate: (message: MinutesUpdateMessage) => void
   onStateChange: (state: WebSocketConnectionState) => void
 }
 
-type OutgoingAudioMessage = AudioChunkMessage | AudioSilenceMessage
+type OutgoingMessage = AudioChunkMessage | AudioSilenceMessage | MinutesGenerateMessage
 
 const INITIAL_RECONNECT_DELAY_MS = 1000
 const MAX_RECONNECT_DELAY_MS = 10000
@@ -54,7 +74,7 @@ export class SubtitleWebSocketClient {
   private reconnectTimer?: number
   private shouldReconnect = false
   private reconnectAttempts = 0
-  private pendingMessages: OutgoingAudioMessage[] = []
+  private pendingMessages: OutgoingMessage[] = []
 
   constructor(private readonly options: WebSocketClientOptions) {}
 
@@ -128,12 +148,21 @@ export class SubtitleWebSocketClient {
     this.sendOrQueue(message)
   }
 
+  generateMinutes(): void {
+    const message: MinutesGenerateMessage = {
+      type: 'minutes.generate',
+      sessionId: this.options.sessionId
+    }
+
+    this.sendOrQueue(message)
+  }
+
   private handleMessage(data: unknown): void {
     if (typeof data !== 'string') {
       return
     }
 
-    let message: SubtitleUpdateMessage | RealtimeStatusMessage
+    let message: SubtitleUpdateMessage | RealtimeStatusMessage | MinutesUpdateMessage
 
     try {
       message = JSON.parse(data) as SubtitleUpdateMessage | RealtimeStatusMessage
@@ -148,6 +177,11 @@ export class SubtitleWebSocketClient {
 
     if (message.type === 'realtime.status') {
       this.options.onRealtimeStatus(message)
+      return
+    }
+
+    if (message.type === 'minutes.update') {
+      this.options.onMinutesUpdate(message)
     }
   }
 
@@ -178,7 +212,7 @@ export class SubtitleWebSocketClient {
     this.reconnectTimer = undefined
   }
 
-  private sendOrQueue(message: OutgoingAudioMessage): void {
+  private sendOrQueue(message: OutgoingMessage): void {
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.socket.send(JSON.stringify(message))
       return

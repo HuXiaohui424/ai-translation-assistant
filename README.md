@@ -1,3 +1,6 @@
+# 视频地址
+https://www.bilibili.com/video/BV1E5E46WEar/?vd_source=5c28622926fdb3c8c1a9929a3f0c7f37
+
 # AI Translation Assistant
 
 AI Translation Assistant 是一个前后端分离的桌面实时翻译工具。应用通过 Electron 采集系统音频或麦克风音频，将 16 kHz PCM 音频流发送至 Spring Boot 后端，再由阿里云 DashScope 完成实时语音识别与翻译。识别完成的字幕还可以进一步生成会议纪要，并保存为 Markdown 或文本文件。

@@ -7,9 +7,15 @@ import org.springframework.util.StringUtils;
 @Component
 public class SentenceBoundaryDetector {
 
-    private static final long SILENCE_BOUNDARY_MS = 600;
+    private static final long SILENCE_BOUNDARY_MS = 700;
+    private static final long FINAL_REVISION_GRACE_MS = 1_000;
+
     public boolean shouldFinishBySilence(long silenceDurationMs) {
         return silenceDurationMs >= SILENCE_BOUNDARY_MS;
+    }
+
+    public boolean shouldFinishBySilence(long silenceDurationMs, long boundaryMs) {
+        return silenceDurationMs >= boundaryMs;
     }
 
     public boolean shouldFinishByModelFinal(boolean modelFinal) {
@@ -23,9 +29,28 @@ public class SentenceBoundaryDetector {
     }
 
     public boolean canReviseFinalSegment(SubtitleSegment segment, String source, String translation) {
+        return canReviseFinalSegment(segment, source, translation, System.currentTimeMillis(), FINAL_REVISION_GRACE_MS);
+    }
+
+    public boolean canReviseFinalSegment(
+        SubtitleSegment segment,
+        String source,
+        String translation,
+        long currentTimeMs,
+        long revisionGraceMs
+    ) {
         return segment != null
             && Boolean.TRUE.equals(segment.getIsFinal())
+            && isWithinRevisionGraceWindow(segment, currentTimeMs, revisionGraceMs)
             && hasTextChanged(segment, source, translation);
+    }
+
+    private boolean isWithinRevisionGraceWindow(SubtitleSegment segment, long currentTimeMs, long revisionGraceMs) {
+        if (segment.getFinalizedAtMs() == null) {
+            return true;
+        }
+
+        return currentTimeMs - segment.getFinalizedAtMs() <= revisionGraceMs;
     }
 
     private boolean hasTextChanged(SubtitleSegment segment, String source, String translation) {

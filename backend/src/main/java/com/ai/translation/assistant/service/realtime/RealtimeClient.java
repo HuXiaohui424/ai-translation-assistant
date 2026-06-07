@@ -92,13 +92,24 @@ public class RealtimeClient implements AutoCloseable {
         }
     }
 
-    public Optional<SubtitleUpdateMessage> handleSilence(AudioSilenceMessage message) {
-        if (!sentenceBoundaryDetector.shouldFinishBySilence(message.getDurationMs())) {
+    public synchronized Optional<SubtitleUpdateMessage> handleSilence(AudioSilenceMessage message) {
+        if (!sentenceBoundaryDetector.shouldFinishBySilence(message.getDurationMs(), getSilenceBoundaryMs())) {
             return Optional.empty();
         }
 
-        nextResultStartsNewSegment = hasDisplayableText(activeSegment);
-        return Optional.empty();
+        if (!hasDisplayableText(activeSegment)) {
+            nextResultStartsNewSegment = false;
+            return Optional.empty();
+        }
+
+        nextResultStartsNewSegment = true;
+
+        if (Boolean.TRUE.equals(activeSegment.getIsFinal())) {
+            return Optional.empty();
+        }
+
+        finalizeSegment(activeSegment, System.currentTimeMillis());
+        return Optional.of(buildSubtitleUpdate(activeSegment));
     }
 
     @Override
@@ -343,15 +354,24 @@ public class RealtimeClient implements AutoCloseable {
         List<SubtitleUpdateMessage> updates = new ArrayList<>();
 
         if (shouldForceNewSegment(segment, currentTimeMs)) {
-            segment.setIsFinal(true);
-            segment.setFinalizedAtMs(currentTimeMs);
+            finalizeSegment(segment, currentTimeMs);
+            removeSentenceBindings(segment);
             updates.add(buildSubtitleUpdate(segment));
             segment = createAndActivateSegment();
             bindSentenceKey(sentenceKey, segment);
         }
 
         if (Boolean.TRUE.equals(segment.getIsFinal())) {
-            if (sentenceBoundaryDetector.canReviseFinalSegment(segment, sourceText, translationText)) {
+            if (nextResultStartsNewSegment && !sentenceEnd) {
+                segment = createAndActivateSegment();
+                bindSentenceKey(sentenceKey, segment);
+            } else if (sentenceBoundaryDetector.canReviseFinalSegment(
+                segment,
+                sourceText,
+                translationText,
+                currentTimeMs,
+                getFinalSegmentRevisionGraceMs()
+            )) {
                 sentenceEnd = true;
             } else if (!sentenceEnd) {
                 segment = createAndActivateSegment();
@@ -420,10 +440,28 @@ public class RealtimeClient implements AutoCloseable {
         return Optional.ofNullable(properties.getMaxSegmentDurationMs()).orElse(3000L);
     }
 
+    private long getSilenceBoundaryMs() {
+        return Optional.ofNullable(properties.getSilenceBoundaryMs()).orElse(700L);
+    }
+
+    private long getFinalSegmentRevisionGraceMs() {
+        return Optional.ofNullable(properties.getFinalSegmentRevisionGraceMs()).orElse(1000L);
+    }
+
     private void bindSentenceKey(String sentenceKey, SubtitleSegment segment) {
         if (sentenceKey != null) {
             sentenceSegments.put(sentenceKey, segment);
         }
+    }
+
+    private void removeSentenceBindings(SubtitleSegment segment) {
+        sentenceSegments.entrySet().removeIf(entry -> entry.getValue() == segment);
+    }
+
+    private void finalizeSegment(SubtitleSegment segment, long finalizedAtMs) {
+        segment.setIsFinal(true);
+        segment.setFinalizedAtMs(finalizedAtMs);
+        segment.setRevision(segment.getRevision() + 1);
     }
 
     private SubtitleSegment createAndActivateSegment() {

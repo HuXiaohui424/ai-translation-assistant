@@ -11,20 +11,14 @@ class SentenceBoundaryDetectorTests {
 
     @Test
     void allowsFinalSegmentRevisionWithinGraceWindow() {
-        SubtitleSegment segment = SubtitleSegment.builder()
-            .segmentId("seg-1")
-            .source("we need to optimize")
-            .translation("我们需要优化")
-            .revision(2)
-            .isFinal(true)
-            .startedAtMs(1_000L)
-            .finalizedAtMs(2_000L)
-            .build();
+        SubtitleSegment segment = finalSegment();
 
         boolean canRevise = detector.canReviseFinalSegment(
             segment,
             "we need to optimize the database",
-            "我们需要优化数据库"
+            "we need to optimize the database",
+            2_500L,
+            1_000L
         );
 
         assertThat(canRevise).isTrue();
@@ -32,23 +26,38 @@ class SentenceBoundaryDetectorTests {
 
     @Test
     void rejectsFinalSegmentRevisionWhenTextDoesNotChange() {
-        SubtitleSegment segment = SubtitleSegment.builder()
-            .segmentId("seg-1")
-            .source("we need to optimize")
-            .translation("我们需要优化")
-            .revision(2)
-            .isFinal(true)
-            .startedAtMs(1_000L)
-            .finalizedAtMs(2_000L)
-            .build();
+        SubtitleSegment segment = finalSegment();
 
         boolean canRevise = detector.canReviseFinalSegment(
             segment,
             "we need to optimize",
-            "我们需要优化"
+            "we need to optimize",
+            2_500L,
+            1_000L
         );
 
         assertThat(canRevise).isFalse();
+    }
+
+    @Test
+    void rejectsFinalSegmentRevisionOutsideGraceWindow() {
+        SubtitleSegment segment = finalSegment();
+
+        boolean canRevise = detector.canReviseFinalSegment(
+            segment,
+            "we need to optimize the database",
+            "we need to optimize the database",
+            3_001L,
+            1_000L
+        );
+
+        assertThat(canRevise).isFalse();
+    }
+
+    @Test
+    void finishesBySilenceWhenBoundaryIsReached() {
+        assertThat(detector.shouldFinishBySilence(699L, 700L)).isFalse();
+        assertThat(detector.shouldFinishBySilence(700L, 700L)).isTrue();
     }
 
     @Test
@@ -81,5 +90,17 @@ class SentenceBoundaryDetectorTests {
         boolean shouldFinish = detector.shouldFinishByDuration(segment, 3_999L, 3_000L);
 
         assertThat(shouldFinish).isFalse();
+    }
+
+    private SubtitleSegment finalSegment() {
+        return SubtitleSegment.builder()
+            .segmentId("seg-1")
+            .source("we need to optimize")
+            .translation("we need to optimize")
+            .revision(2)
+            .isFinal(true)
+            .startedAtMs(1_000L)
+            .finalizedAtMs(2_000L)
+            .build();
     }
 }

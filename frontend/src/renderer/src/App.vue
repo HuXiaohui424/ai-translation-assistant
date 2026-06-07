@@ -18,9 +18,11 @@
           <button
             class="icon-button"
             type="button"
-            title="隐藏窗口，快捷键 Ctrl/Command + Alt + S 可显示"
-            aria-label="隐藏窗口"
-            @click="hideWindow"
+            title="退出程序"
+            aria-label="退出程序"
+            @mousedown.stop.prevent="closeWindow"
+            @pointerdown.stop.prevent="closeWindow"
+            @click="closeWindow"
           >
             ×
           </button>
@@ -39,7 +41,7 @@
         </article>
       </div>
 
-      <footer class="shortcut-hint drag-region">
+      <footer class="shortcut-hint">
         <div class="capture-modes no-drag" aria-label="音频采集模式">
           <button
             class="mode-button"
@@ -58,7 +60,7 @@
             麦克风
           </button>
         </div>
-        <span>RMS {{ currentRms.toFixed(3) }} · Ctrl/Command + Alt + S 隐藏或显示</span>
+        <span class="drag-region">RMS {{ currentRms.toFixed(3) }}</span>
       </footer>
     </section>
   </main>
@@ -92,13 +94,14 @@ interface SubtitleSegment {
 const defaultCaption: SubtitleSegment = {
   segmentId: 'waiting',
   revision: 0,
-  source: 'Waiting for mock audio to reach the backend...',
-  translation: '等待模拟音频发送到后端...',
+  source: 'Waiting for audio to reach the backend...',
+  translation: '等待音频发送到后端...',
   isFinal: false,
   updatedAt: Date.now()
 }
 
-const sessionId = 'session-001'
+const websocketUrl = import.meta.env.VITE_SUBTITLE_WS_URL ?? 'ws://localhost:8080/ws/audio'
+const sessionId = window.crypto.randomUUID()
 const segments = ref<SubtitleSegment[]>([defaultCaption])
 const isPlaying = ref(true)
 const latency = ref(0)
@@ -280,6 +283,7 @@ async function togglePlayback(): Promise<void> {
   latency.value = 0
   currentRms.value = 0
   await audioCaptureService?.stop()
+  websocketClient?.disconnect()
 }
 
 async function changeCaptureMode(mode: AudioCaptureMode): Promise<void> {
@@ -317,8 +321,14 @@ async function startAudioCapture(): Promise<void> {
   }
 }
 
-function hideWindow(): void {
-  void window.subtitleWindow?.hide()
+function closeWindow(): void {
+  try {
+    window.subtitleWindow?.close()
+  } catch (error) {
+    console.error('Failed to close subtitle window.', error)
+  }
+
+  window.close()
 }
 
 function markTranslating(): void {
@@ -331,7 +341,7 @@ function markTranslating(): void {
 
 onMounted(() => {
   websocketClient = new SubtitleWebSocketClient({
-    url: 'ws://localhost:8080/ws/audio',
+    url: websocketUrl,
     sessionId,
     onSubtitleUpdate: handleSubtitleUpdate,
     onRealtimeStatus: handleRealtimeStatus,

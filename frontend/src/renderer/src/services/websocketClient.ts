@@ -5,7 +5,7 @@ export interface AudioChunkMessage {
   sessionId: string
   timestamp: number
   sampleRate: number
-  format: 'pcm16'
+  format: 'pcm'
   data: string
 }
 
@@ -110,7 +110,7 @@ export class SubtitleWebSocketClient {
       sessionId: this.options.sessionId,
       timestamp: Date.now(),
       sampleRate: 16000,
-      format: 'pcm16',
+      format: 'pcm',
       data
     }
 

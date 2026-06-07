@@ -1,9 +1,15 @@
 /// <reference types="vite/client" />
 
+interface ImportMetaEnv {
+  readonly VITE_SUBTITLE_WS_URL?: string
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv
+}
+
 interface SubtitleWindowApi {
-  hide: () => Promise<void>
-  show: () => Promise<void>
-  toggle: () => Promise<void>
+  close: () => void
 }
 
 interface Window {

@@ -129,7 +129,7 @@ const connectionStatus = computed<DisplayConnectionStatus>(() => {
     return 'failed'
   }
 
-  if (connectionState.value !== 'connected' || realtimeState.value === 'connecting') {
+  if (connectionState.value !== 'connected') {
     return 'disconnected'
   }
 
@@ -170,6 +170,7 @@ const captureStatusText = computed(() => {
 })
 
 function handleSubtitleUpdate(message: SubtitleUpdateMessage): void {
+  realtimeState.value = 'connected'
   markTranslating()
 
   const nextSegment: SubtitleSegment = {

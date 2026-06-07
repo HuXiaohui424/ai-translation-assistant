@@ -26,6 +26,9 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
+/**
+ * 校验并分发客户端 WebSocket 消息，同时维护连接与业务会话的关联关系。
+ */
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -40,6 +43,8 @@ public class AudioWebSocketHandler extends TextWebSocketHandler {
     private final RealtimeApiProperties realtimeApiProperties;
     private final RealtimeSessionService realtimeSessionService;
     private final MinutesSessionService minutesSessionService;
+
+    // WebSocket 连接 ID 与业务会话 ID 的映射，用于断开连接时统一释放资源。
     private final ConcurrentMap<String, String> websocketSessionIds = new ConcurrentHashMap<>();
 
     @Override
@@ -133,6 +138,7 @@ public class AudioWebSocketHandler extends TextWebSocketHandler {
                 statusMessage -> sendMessage(session, statusMessage)
             );
         } catch (RuntimeException exception) {
+            // 启动或发送失败后立即淘汰客户端，避免继续复用失效连接。
             log.warn("Realtime service failed, sessionId={}", audioChunkMessage.getSessionId(), exception);
             realtimeSessionService.closeSession(audioChunkMessage.getSessionId());
             sendMessage(session, RealtimeStatusMessage.builder()
@@ -171,6 +177,7 @@ public class AudioWebSocketHandler extends TextWebSocketHandler {
     private void sendSubtitleUpdate(WebSocketSession session, SubtitleUpdateMessage subtitleUpdateMessage) {
         sendMessage(session, subtitleUpdateMessage);
 
+        // 纪要只使用最终字幕，避免缓存仍在持续修订的临时结果。
         if (Boolean.TRUE.equals(subtitleUpdateMessage.getIsFinal())) {
             minutesSessionService.cacheFinalSubtitle(subtitleUpdateMessage);
         }
@@ -182,10 +189,12 @@ public class AudioWebSocketHandler extends TextWebSocketHandler {
         }
 
         try {
+            // WebSocketSession 不保证并发发送安全，同一连接的写操作需要串行化。
             synchronized (session) {
                 session.sendMessage(new TextMessage(objectMapper.writeValueAsString(outgoingMessage)));
             }
         } catch (IOException exception) {
+            // 推送失败时停止后台识别及重连，避免连接断开后继续占用资源。
             websocketSessionIds.computeIfPresent(session.getId(), (websocketSessionId, realtimeSessionId) -> {
                 realtimeSessionService.closeSession(realtimeSessionId);
                 return null;

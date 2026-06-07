@@ -16,6 +16,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
+        // 桌面端通过单一端点发送音频、静音边界和纪要生成指令。
         registry.addHandler(audioWebSocketHandler, "/ws/audio")
             .setAllowedOrigins("*");
     }

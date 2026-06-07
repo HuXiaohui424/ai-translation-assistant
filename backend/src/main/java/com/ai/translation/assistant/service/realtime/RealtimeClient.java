@@ -32,6 +32,9 @@ import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
 
+/**
+ * 封装单个业务会话的实时识别连接、字幕片段状态和自动重连流程。
+ */
 @Slf4j
 public class RealtimeClient implements AutoCloseable {
 
@@ -102,6 +105,7 @@ public class RealtimeClient implements AutoCloseable {
             return Optional.empty();
         }
 
+        // 静音边界先标记切段，避免后续模型修订被并入上一片段。
         nextResultStartsNewSegment = true;
 
         if (Boolean.TRUE.equals(activeSegment.getIsFinal())) {
@@ -141,6 +145,7 @@ public class RealtimeClient implements AutoCloseable {
             return false;
         }
 
+        // 双重检查保证并发音频块只会启动一个识别器实例。
         synchronized (this) {
             if (started.get()) {
                 return true;
@@ -242,6 +247,7 @@ public class RealtimeClient implements AutoCloseable {
 
     private void resetRecognizer(TranslationRecognizerRealtime targetRecognizer) {
         synchronized (this) {
+            // 旧连接的延迟回调不得清空已经替换成功的新识别器。
             if (recognizer == targetRecognizer) {
                 recognizer = null;
                 started.set(false);
@@ -262,6 +268,7 @@ public class RealtimeClient implements AutoCloseable {
     }
 
     private void scheduleReconnect() {
+        // 多个失败回调可能同时到达，原子标记保证只安排一个重连任务。
         if (closed.get() || !reconnecting.compareAndSet(false, true)) {
             return;
         }
@@ -301,6 +308,8 @@ public class RealtimeClient implements AutoCloseable {
     private long calculateReconnectDelayMs(int attempt) {
         long initialDelayMs = Optional.ofNullable(properties.getReconnectInitialDelayMs()).orElse(1000L);
         long maxDelayMs = Optional.ofNullable(properties.getReconnectMaxDelayMs()).orElse(10000L);
+
+        // 限制移位次数和最大等待时间，避免高重试次数导致延迟溢出。
         long exponentialDelayMs = initialDelayMs * (1L << Math.min(attempt - 1, 10));
 
         return Math.min(exponentialDelayMs, maxDelayMs);
@@ -348,11 +357,13 @@ public class RealtimeClient implements AutoCloseable {
         String translationText,
         boolean sentenceEnd
     ) {
+        // SDK 回调可能跨线程到达，串行维护活动片段及句子绑定关系。
         String sentenceKey = buildSentenceKey(transcriptionResult, translation);
         SubtitleSegment segment = resolveSegment(sentenceKey);
         long currentTimeMs = System.currentTimeMillis();
         List<SubtitleUpdateMessage> updates = new ArrayList<>();
 
+        // 长时间未结束的片段先强制定稿，再用新片段承接当前识别结果。
         if (shouldForceNewSegment(segment, currentTimeMs)) {
             finalizeSegment(segment, currentTimeMs);
             removeSentenceBindings(segment);
@@ -372,6 +383,7 @@ public class RealtimeClient implements AutoCloseable {
                 currentTimeMs,
                 getFinalSegmentRevisionGraceMs()
             )) {
+                // 模型可能在最终结果后短暂修正文本，宽限期内沿用原片段版本。
                 sentenceEnd = true;
             } else if (!sentenceEnd) {
                 segment = createAndActivateSegment();
@@ -409,6 +421,7 @@ public class RealtimeClient implements AutoCloseable {
 
     private SubtitleSegment resolveSegment(String sentenceKey) {
         if (sentenceKey != null) {
+            // 按模型句子 ID 绑定片段，兼容原文和译文分批到达。
             return sentenceSegments.computeIfAbsent(sentenceKey, ignored -> {
                 if (activeSegment != null && !Boolean.TRUE.equals(activeSegment.getIsFinal())) {
                     return activeSegment;

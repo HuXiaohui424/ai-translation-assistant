@@ -69,6 +69,9 @@ const MAX_RECONNECT_DELAY_MS = 10000
 const MAX_RECONNECT_ATTEMPTS = 8
 const MAX_PENDING_MESSAGES = 120
 
+/**
+ * 管理字幕 WebSocket 连接、协议消息分发和断线期间的有限缓冲。
+ */
 export class SubtitleWebSocketClient {
   private socket?: WebSocket
   private reconnectTimer?: number
@@ -105,6 +108,7 @@ export class SubtitleWebSocketClient {
     })
 
     this.socket.addEventListener('error', () => {
+      // 连接异常通常随后触发 close，由 close 统一进入重连流程。
       if (!this.shouldReconnect) {
         this.options.onStateChange('error')
       }
@@ -112,6 +116,7 @@ export class SubtitleWebSocketClient {
   }
 
   disconnect(): void {
+    // 主动断开时清空队列，避免恢复后发送上一轮的陈旧音频。
     this.shouldReconnect = false
     this.clearReconnectTimer()
     this.pendingMessages = []
@@ -196,6 +201,8 @@ export class SubtitleWebSocketClient {
     }
 
     this.reconnectAttempts += 1
+
+    // 使用有上限的指数退避，降低连续断线时的连接压力。
     const reconnectDelayMs = Math.min(
       INITIAL_RECONNECT_DELAY_MS * 2 ** (this.reconnectAttempts - 1),
       MAX_RECONNECT_DELAY_MS
@@ -220,6 +227,7 @@ export class SubtitleWebSocketClient {
 
     this.pendingMessages.push(message)
 
+    // 仅保留最新消息，防止长时间断线导致内存持续增长。
     if (this.pendingMessages.length > MAX_PENDING_MESSAGES) {
       this.pendingMessages.splice(0, this.pendingMessages.length - MAX_PENDING_MESSAGES)
     }
@@ -232,6 +240,8 @@ export class SubtitleWebSocketClient {
 
     const messages = this.pendingMessages
     this.pendingMessages = []
+
+    // 按入队顺序发送，保持音频块和静音边界的时序。
     messages.forEach((message) => this.socket?.send(JSON.stringify(message)))
   }
 }

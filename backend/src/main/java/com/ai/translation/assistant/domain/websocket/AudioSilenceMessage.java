@@ -17,6 +17,7 @@ public class AudioSilenceMessage {
     @NotNull
     private Long timestamp;
 
+    @NotNull
     @PositiveOrZero
     private Long durationMs;
 }

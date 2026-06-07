@@ -65,6 +65,12 @@ button {
   -webkit-app-region: no-drag;
 }
 
+.window-actions,
+.window-actions * {
+  -webkit-app-region: no-drag;
+  pointer-events: auto;
+}
+
 .toolbar {
   display: flex;
   align-items: center;

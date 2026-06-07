@@ -13,14 +13,16 @@ management:
 
 aliyun:
   realtime:
-    api-key: ${DASHSCOPE_API_KEY:sk-c7d8993a9d17412aa19c11d5bb1a24e6}
+    api-key: ${DASHSCOPE_API_KEY:}
     model: gummy-realtime-v1
     source-language: en
     target-language: zh
     sample-rate: 16000
     format: pcm
     max-end-silence: 700
+    silence-boundary-ms: 700
     max-segment-duration-ms: 3000
+    final-segment-revision-grace-ms: 1000
     reconnect-max-attempts: 5
     reconnect-initial-delay-ms: 1000
     reconnect-max-delay-ms: 10000

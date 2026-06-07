@@ -1,8 +1,7 @@
 import { join } from 'node:path'
-import { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, session, shell } from 'electron'
+import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell } from 'electron'
 
 const isDevelopment = Boolean(process.env.ELECTRON_RENDERER_URL)
-const TOGGLE_WINDOW_SHORTCUT = 'CommandOrControl+Alt+S'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -71,46 +70,18 @@ function createMainWindow(): void {
   mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
 }
 
-function showMainWindow(): void {
-  if (!mainWindow) {
-    createMainWindow()
-  }
-
-  mainWindow?.show()
-  mainWindow?.focus()
+function quitApplication(): void {
+  app.quit()
 }
 
-function toggleMainWindow(): void {
-  if (!mainWindow) {
-    createMainWindow()
-    return
-  }
-
-  if (mainWindow.isVisible()) {
-    mainWindow.hide()
-    return
-  }
-
-  showMainWindow()
-}
-
-ipcMain.handle('subtitle-window:hide', () => {
-  mainWindow?.hide()
-})
-
-ipcMain.handle('subtitle-window:show', () => {
-  showMainWindow()
-})
-
-ipcMain.handle('subtitle-window:toggle', () => {
-  toggleMainWindow()
+ipcMain.on('subtitle-window:close', () => {
+  quitApplication()
 })
 
 app.whenReady().then(() => {
   app.setAppUserModelId('com.ai.translation.assistant')
   registerDisplayMediaHandler()
   createMainWindow()
-  globalShortcut.register(TOGGLE_WINDOW_SHORTCUT, toggleMainWindow)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -123,8 +94,4 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
-})
-
-app.on('will-quit', () => {
-  globalShortcut.unregisterAll()
 })

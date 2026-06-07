@@ -112,9 +112,9 @@ let websocketClient: SubtitleWebSocketClient | undefined
 let audioCaptureService: AudioCaptureService | undefined
 
 const currentCaption = computed(() =>
-  segments.value.reduce((latestSegment, segment) =>
+  toReadableCaption(segments.value.reduce((latestSegment, segment) =>
     segment.updatedAt > latestSegment.updatedAt ? segment : latestSegment
-  )
+  ))
 )
 
 const connectionStatusText = computed(() => {
@@ -173,7 +173,7 @@ function handleSubtitleUpdate(message: SubtitleUpdateMessage): void {
 
   const existingSegment = segments.value[existingIndex]
 
-  if (existingSegment.isFinal || message.revision <= existingSegment.revision) {
+  if (message.revision <= existingSegment.revision) {
     return
   }
 
@@ -200,6 +200,48 @@ function handleRealtimeStatus(message: RealtimeStatusMessage): void {
       updatedAt: Date.now()
     }]
   }
+}
+
+function toReadableCaption(segment: SubtitleSegment): SubtitleSegment {
+  return {
+    ...segment,
+    source: takeReadableTail(segment.source, 150),
+    translation: takeReadableTail(segment.translation, 84)
+  }
+}
+
+function takeReadableTail(text: string, maxLength: number): string {
+  const normalizedText = text.trim()
+
+  if (normalizedText.length <= maxLength) {
+    return normalizedText
+  }
+
+  const boundaryIndex = Math.max(
+    normalizedText.lastIndexOf('.'),
+    normalizedText.lastIndexOf('?'),
+    normalizedText.lastIndexOf('!'),
+    normalizedText.lastIndexOf('。'),
+    normalizedText.lastIndexOf('？'),
+    normalizedText.lastIndexOf('！'),
+    normalizedText.lastIndexOf('，'),
+    normalizedText.lastIndexOf(','),
+    normalizedText.lastIndexOf(';'),
+    normalizedText.lastIndexOf('；')
+  )
+
+  if (boundaryIndex >= normalizedText.length - maxLength && boundaryIndex < normalizedText.length - 1) {
+    return normalizedText.slice(boundaryIndex + 1).trim()
+  }
+
+  const tail = normalizedText.slice(-maxLength)
+  const firstSpaceIndex = tail.search(/\s/)
+
+  if (firstSpaceIndex > 0 && firstSpaceIndex < 24) {
+    return tail.slice(firstSpaceIndex + 1).trim()
+  }
+
+  return tail.trim()
 }
 
 async function togglePlayback(): Promise<void> {
@@ -237,8 +279,8 @@ async function startAudioCapture(): Promise<void> {
       currentRms.value = rms
       websocketClient?.sendAudioChunk(base64Pcm16)
     },
-    onSentenceEnd: () => {
-      websocketClient?.sendSentenceEnd()
+    onSilence: (durationMs) => {
+      websocketClient?.sendSilence(durationMs)
     },
     onStateChange: (state, mode) => {
       captureState.value = state

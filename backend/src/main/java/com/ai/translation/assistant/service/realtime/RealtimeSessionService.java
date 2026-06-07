@@ -1,6 +1,7 @@
 package com.ai.translation.assistant.service.realtime;
 
 import com.ai.translation.assistant.domain.websocket.AudioChunkMessage;
+import com.ai.translation.assistant.domain.websocket.AudioSilenceMessage;
 import com.ai.translation.assistant.domain.websocket.RealtimeStatusMessage;
 import com.ai.translation.assistant.domain.websocket.SubtitleUpdateMessage;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,11 +30,11 @@ public class RealtimeSessionService {
         realtimeClient.sendAudioChunk(message);
     }
 
-    public void sendSentenceEnd(String sessionId) {
-        RealtimeClient realtimeClient = realtimeClients.get(sessionId);
+    public void handleSilence(AudioSilenceMessage message, Consumer<SubtitleUpdateMessage> subtitleSender) {
+        RealtimeClient realtimeClient = realtimeClients.get(message.getSessionId());
 
         if (realtimeClient != null) {
-            realtimeClient.sendSentenceEndSilence();
+            realtimeClient.handleSilence(message).ifPresent(subtitleSender);
         }
     }
 

@@ -4,6 +4,7 @@ import com.ai.translation.assistant.config.RealtimeApiProperties;
 import com.ai.translation.assistant.domain.subtitle.SubtitleSegment;
 import com.ai.translation.assistant.domain.websocket.AudioChunkMessage;
 import com.ai.translation.assistant.domain.websocket.AudioSilenceMessage;
+import com.ai.translation.assistant.domain.websocket.RealtimeConnectionStatus;
 import com.ai.translation.assistant.domain.websocket.RealtimeStatusMessage;
 import com.ai.translation.assistant.domain.websocket.SubtitleUpdateMessage;
 import com.ai.translation.assistant.service.subtitle.SentenceBoundaryDetector;
@@ -23,8 +24,11 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
 
@@ -36,11 +40,15 @@ public class RealtimeClient implements AutoCloseable {
     private final RealtimeSubtitleListener subtitleListener;
     private final RealtimeStatusListener statusListener;
     private final SentenceBoundaryDetector sentenceBoundaryDetector;
-    private final TranslationRecognizerRealtime recognizer;
     private final AtomicBoolean started = new AtomicBoolean(false);
+    private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final AtomicBoolean reconnecting = new AtomicBoolean(false);
     private final AtomicInteger segmentSequence = new AtomicInteger();
+    private final AtomicInteger reconnectAttempts = new AtomicInteger();
     private final Map<String, SubtitleSegment> sentenceSegments = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService reconnectExecutor;
 
+    private volatile TranslationRecognizerRealtime recognizer;
     private volatile SubtitleSegment activeSegment;
     private volatile boolean nextResultStartsNewSegment = false;
     private volatile long latestAudioTimestamp = System.currentTimeMillis();
@@ -57,14 +65,31 @@ public class RealtimeClient implements AutoCloseable {
         this.subtitleListener = subtitleListener;
         this.statusListener = statusListener;
         this.sentenceBoundaryDetector = sentenceBoundaryDetector;
-        this.recognizer = new TranslationRecognizerRealtime();
+        this.reconnectExecutor = Executors.newSingleThreadScheduledExecutor(task -> {
+            Thread thread = new Thread(task, "realtime-reconnect-" + sessionId);
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 
     public void sendAudioChunk(AudioChunkMessage message) {
-        ensureStarted();
+        if (!ensureStarted()) {
+            return;
+        }
+
         latestAudioTimestamp = message.getTimestamp();
         byte[] audioBytes = Base64.getDecoder().decode(message.getData());
-        recognizer.sendAudioFrame(ByteBuffer.wrap(audioBytes));
+        TranslationRecognizerRealtime currentRecognizer = recognizer;
+
+        if (currentRecognizer == null) {
+            return;
+        }
+
+        try {
+            currentRecognizer.sendAudioFrame(ByteBuffer.wrap(audioBytes));
+        } catch (RuntimeException exception) {
+            handleConnectionFailure(currentRecognizer, exception, "发送音频帧失败");
+        }
     }
 
     public Optional<SubtitleUpdateMessage> handleSilence(AudioSilenceMessage message) {
@@ -78,26 +103,52 @@ public class RealtimeClient implements AutoCloseable {
 
     @Override
     public void close() {
-        if (!started.getAndSet(false)) {
+        if (!closed.compareAndSet(false, true)) {
             return;
         }
 
-        try {
-            recognizer.stop();
-        } catch (RuntimeException exception) {
-            log.warn("Failed to stop realtime recognizer, sessionId={}", sessionId, exception);
-        }
+        reconnectExecutor.shutdownNow();
+        closeRecognizer(recognizer);
+        recognizer = null;
+        started.set(false);
     }
 
-    private void ensureStarted() {
+    private boolean ensureStarted() {
+        if (closed.get()) {
+            return false;
+        }
+
         if (!StringUtils.hasText(properties.getApiKey())) {
             throw new IllegalStateException("DashScope api key is not configured");
         }
 
-        if (!started.compareAndSet(false, true)) {
-            return;
+        if (started.get()) {
+            return true;
         }
 
+        if (reconnecting.get() || hasReconnectAttemptsExhausted()) {
+            return false;
+        }
+
+        synchronized (this) {
+            if (started.get()) {
+                return true;
+            }
+
+            if (reconnecting.get() || hasReconnectAttemptsExhausted()) {
+                return false;
+            }
+
+            return startRecognizer();
+        }
+    }
+
+    private boolean startRecognizer() {
+        if (closed.get()) {
+            return false;
+        }
+
+        TranslationRecognizerRealtime nextRecognizer = new TranslationRecognizerRealtime();
         TranslationRecognizerParam param = TranslationRecognizerParam.builder()
             .apiKey(properties.getApiKey())
             .model(properties.getModel())
@@ -110,16 +161,31 @@ public class RealtimeClient implements AutoCloseable {
             .maxEndSilence(properties.getMaxEndSilence())
             .build();
 
-        recognizer.call(param, createCallback());
-        sendStatus("connecting", "正在连接实时识别服务");
+        sendStatus(RealtimeConnectionStatus.CONNECTING, "正在连接实时识别服务");
+
+        try {
+            recognizer = nextRecognizer;
+            started.set(true);
+            nextRecognizer.call(param, createCallback(nextRecognizer));
+            return true;
+        } catch (RuntimeException exception) {
+            log.warn("Failed to start realtime recognizer, sessionId={}", sessionId, exception);
+            resetRecognizer(nextRecognizer);
+            closeRecognizer(nextRecognizer);
+            sendStatus(RealtimeConnectionStatus.CONNECTING, "实时识别服务连接失败，正在尝试重连");
+            scheduleReconnect();
+            return false;
+        }
     }
 
-    private ResultCallback<TranslationRecognizerResult> createCallback() {
+    private ResultCallback<TranslationRecognizerResult> createCallback(TranslationRecognizerRealtime callbackRecognizer) {
         return new ResultCallback<>() {
             @Override
             public void onOpen(Status status) {
                 log.info("Realtime recognizer connected, sessionId={}, status={}", sessionId, status);
-                sendStatus("connected", "实时识别服务已连接");
+                reconnectAttempts.set(0);
+                reconnecting.set(false);
+                sendStatus(RealtimeConnectionStatus.CONNECTED, "实时识别服务已连接");
             }
 
             @Override
@@ -129,21 +195,107 @@ public class RealtimeClient implements AutoCloseable {
 
             @Override
             public void onComplete() {
-                started.set(false);
+                if (closed.get()) {
+                    return;
+                }
+
+                resetRecognizer(callbackRecognizer);
                 log.info("Realtime recognizer completed, sessionId={}", sessionId);
-                sendStatus("completed", "实时识别服务已结束");
+                sendStatus(RealtimeConnectionStatus.CONNECTING, "实时识别服务已结束，正在尝试重连");
+                scheduleReconnect();
             }
 
             @Override
             public void onError(Exception exception) {
-                started.set(false);
+                if (closed.get()) {
+                    return;
+                }
+
                 log.warn("Realtime recognizer error, sessionId={}", sessionId, exception);
-                sendStatus("error", "实时识别服务异常，请检查 API Key、网络或模型配置");
+                handleConnectionFailure(callbackRecognizer, exception, "实时识别服务异常");
             }
         };
     }
 
-    private void sendStatus(String status, String message) {
+    private void handleConnectionFailure(
+        TranslationRecognizerRealtime failedRecognizer,
+        Exception exception,
+        String failureMessage
+    ) {
+        resetRecognizer(failedRecognizer);
+        closeRecognizer(failedRecognizer);
+        log.warn("{}, sessionId={}", failureMessage, sessionId, exception);
+        sendStatus(RealtimeConnectionStatus.CONNECTING, "实时识别服务异常，正在尝试重连");
+        scheduleReconnect();
+    }
+
+    private void resetRecognizer(TranslationRecognizerRealtime targetRecognizer) {
+        synchronized (this) {
+            if (recognizer == targetRecognizer) {
+                recognizer = null;
+                started.set(false);
+            }
+        }
+    }
+
+    private void closeRecognizer(TranslationRecognizerRealtime targetRecognizer) {
+        if (targetRecognizer == null) {
+            return;
+        }
+
+        try {
+            targetRecognizer.stop();
+        } catch (RuntimeException exception) {
+            log.warn("Failed to stop realtime recognizer, sessionId={}", sessionId, exception);
+        }
+    }
+
+    private void scheduleReconnect() {
+        if (closed.get() || !reconnecting.compareAndSet(false, true)) {
+            return;
+        }
+
+        int attempt = reconnectAttempts.incrementAndGet();
+
+        if (attempt > getReconnectMaxAttempts()) {
+            reconnecting.set(false);
+            sendStatus(RealtimeConnectionStatus.ERROR, "实时识别服务连接失败，请检查 API Key、网络或模型配置");
+            return;
+        }
+
+        long delayMs = calculateReconnectDelayMs(attempt);
+        reconnectExecutor.schedule(() -> {
+            reconnecting.set(false);
+
+            if (closed.get()) {
+                return;
+            }
+
+            if (!ensureStarted()) {
+                return;
+            }
+
+            log.info("Realtime recognizer reconnect attempt started, sessionId={}, attempt={}", sessionId, attempt);
+        }, delayMs, TimeUnit.MILLISECONDS);
+    }
+
+    private boolean hasReconnectAttemptsExhausted() {
+        return reconnectAttempts.get() > getReconnectMaxAttempts();
+    }
+
+    private int getReconnectMaxAttempts() {
+        return Optional.ofNullable(properties.getReconnectMaxAttempts()).orElse(5);
+    }
+
+    private long calculateReconnectDelayMs(int attempt) {
+        long initialDelayMs = Optional.ofNullable(properties.getReconnectInitialDelayMs()).orElse(1000L);
+        long maxDelayMs = Optional.ofNullable(properties.getReconnectMaxDelayMs()).orElse(10000L);
+        long exponentialDelayMs = initialDelayMs * (1L << Math.min(attempt - 1, 10));
+
+        return Math.min(exponentialDelayMs, maxDelayMs);
+    }
+
+    private void sendStatus(RealtimeConnectionStatus status, String message) {
         statusListener.onRealtimeStatus(RealtimeStatusMessage.builder()
             .type("realtime.status")
             .sessionId(sessionId)

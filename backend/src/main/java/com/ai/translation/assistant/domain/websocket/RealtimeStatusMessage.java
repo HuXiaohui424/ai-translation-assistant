@@ -11,7 +11,7 @@ public class RealtimeStatusMessage {
 
     private String sessionId;
 
-    private String status;
+    private RealtimeConnectionStatus status;
 
     private String message;
 }

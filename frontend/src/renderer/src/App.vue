@@ -78,7 +78,7 @@ import {
   type WebSocketConnectionState
 } from './services/websocketClient'
 
-type DisplayConnectionStatus = WebSocketConnectionState | 'paused'
+type DisplayConnectionStatus = 'disconnected' | 'listening' | 'translating' | 'paused' | 'failed'
 
 interface SubtitleSegment {
   segmentId: string
@@ -102,7 +102,9 @@ const sessionId = 'session-001'
 const segments = ref<SubtitleSegment[]>([defaultCaption])
 const isPlaying = ref(true)
 const latency = ref(0)
-const connectionStatus = ref<DisplayConnectionStatus>('connecting')
+const connectionState = ref<WebSocketConnectionState>('connecting')
+const realtimeState = ref<RealtimeStatusMessage['status']>('connecting')
+const isTranslating = ref(false)
 const captureMode = ref<AudioCaptureMode>('system')
 const activeCaptureMode = ref<AudioCaptureMode>('system')
 const captureState = ref<AudioCaptureState>('idle')
@@ -110,6 +112,7 @@ const currentRms = ref(0)
 
 let websocketClient: SubtitleWebSocketClient | undefined
 let audioCaptureService: AudioCaptureService | undefined
+let translatingResetTimer: number | undefined
 
 const currentCaption = computed(() =>
   toReadableCaption(segments.value.reduce((latestSegment, segment) =>
@@ -117,24 +120,40 @@ const currentCaption = computed(() =>
   ))
 )
 
+const connectionStatus = computed<DisplayConnectionStatus>(() => {
+  if (!isPlaying.value) {
+    return 'paused'
+  }
+
+  if (connectionState.value === 'error' || realtimeState.value === 'error') {
+    return 'failed'
+  }
+
+  if (connectionState.value !== 'connected' || realtimeState.value === 'connecting') {
+    return 'disconnected'
+  }
+
+  return isTranslating.value ? 'translating' : 'listening'
+})
+
 const connectionStatusText = computed(() => {
   const statusText: Record<DisplayConnectionStatus, string> = {
-    connecting: '连接中',
-    connected: '已连接',
     disconnected: '未连接',
-    error: '连接异常',
-    paused: '已暂停'
+    listening: '正在监听',
+    translating: '正在翻译',
+    paused: '已暂停',
+    failed: '连接失败'
   }
 
   return statusText[connectionStatus.value]
 })
 
 const connectionStatusClass = computed(() => ({
-  connecting: connectionStatus.value === 'connecting',
-  connected: connectionStatus.value === 'connected',
   disconnected: connectionStatus.value === 'disconnected',
-  error: connectionStatus.value === 'error',
-  paused: connectionStatus.value === 'paused'
+  listening: connectionStatus.value === 'listening',
+  translating: connectionStatus.value === 'translating',
+  paused: connectionStatus.value === 'paused',
+  failed: connectionStatus.value === 'failed'
 }))
 
 const captureStatusText = computed(() => {
@@ -151,6 +170,8 @@ const captureStatusText = computed(() => {
 })
 
 function handleSubtitleUpdate(message: SubtitleUpdateMessage): void {
+  markTranslating()
+
   const nextSegment: SubtitleSegment = {
     segmentId: message.segmentId,
     revision: message.revision,
@@ -184,12 +205,12 @@ function handleSubtitleUpdate(message: SubtitleUpdateMessage): void {
 }
 
 function handleConnectionStateChange(state: WebSocketConnectionState): void {
-  if (isPlaying.value) {
-    connectionStatus.value = state
-  }
+  connectionState.value = state
 }
 
 function handleRealtimeStatus(message: RealtimeStatusMessage): void {
+  realtimeState.value = message.status
+
   if (message.status === 'error') {
     segments.value = [{
       segmentId: 'realtime-error',
@@ -249,12 +270,12 @@ async function togglePlayback(): Promise<void> {
 
   if (isPlaying.value) {
     websocketClient?.connect()
-    connectionStatus.value = websocketClient?.isConnected() ? 'connected' : 'connecting'
+    connectionState.value = websocketClient?.isConnected() ? 'connected' : 'connecting'
     await startAudioCapture()
     return
   }
 
-  connectionStatus.value = 'paused'
+  isTranslating.value = false
   latency.value = 0
   currentRms.value = 0
   await audioCaptureService?.stop()
@@ -299,6 +320,14 @@ function hideWindow(): void {
   void window.subtitleWindow?.hide()
 }
 
+function markTranslating(): void {
+  isTranslating.value = true
+  window.clearTimeout(translatingResetTimer)
+  translatingResetTimer = window.setTimeout(() => {
+    isTranslating.value = false
+  }, 1500)
+}
+
 onMounted(() => {
   websocketClient = new SubtitleWebSocketClient({
     url: 'ws://localhost:8080/ws/audio',
@@ -313,6 +342,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.clearTimeout(translatingResetTimer)
   void audioCaptureService?.stop()
   websocketClient?.disconnect()
 })

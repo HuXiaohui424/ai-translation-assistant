@@ -42,12 +42,19 @@ interface WebSocketClientOptions {
   onStateChange: (state: WebSocketConnectionState) => void
 }
 
-const RECONNECT_DELAY_MS = 2000
+type OutgoingAudioMessage = AudioChunkMessage | AudioSilenceMessage
+
+const INITIAL_RECONNECT_DELAY_MS = 1000
+const MAX_RECONNECT_DELAY_MS = 10000
+const MAX_RECONNECT_ATTEMPTS = 8
+const MAX_PENDING_MESSAGES = 120
 
 export class SubtitleWebSocketClient {
   private socket?: WebSocket
   private reconnectTimer?: number
   private shouldReconnect = false
+  private reconnectAttempts = 0
+  private pendingMessages: OutgoingAudioMessage[] = []
 
   constructor(private readonly options: WebSocketClientOptions) {}
 
@@ -62,7 +69,9 @@ export class SubtitleWebSocketClient {
 
     this.socket.addEventListener('open', () => {
       this.clearReconnectTimer()
+      this.reconnectAttempts = 0
       this.options.onStateChange('connected')
+      this.flushPendingMessages()
     })
 
     this.socket.addEventListener('message', (event) => {
@@ -76,13 +85,17 @@ export class SubtitleWebSocketClient {
     })
 
     this.socket.addEventListener('error', () => {
-      this.options.onStateChange('error')
+      if (!this.shouldReconnect) {
+        this.options.onStateChange('error')
+      }
     })
   }
 
   disconnect(): void {
     this.shouldReconnect = false
     this.clearReconnectTimer()
+    this.pendingMessages = []
+    this.reconnectAttempts = 0
     this.socket?.close()
     this.socket = undefined
   }
@@ -92,10 +105,6 @@ export class SubtitleWebSocketClient {
   }
 
   sendAudioChunk(data: string): void {
-    if (this.socket?.readyState !== WebSocket.OPEN) {
-      return
-    }
-
     const message: AudioChunkMessage = {
       type: 'audio.chunk',
       sessionId: this.options.sessionId,
@@ -105,14 +114,10 @@ export class SubtitleWebSocketClient {
       data
     }
 
-    this.socket.send(JSON.stringify(message))
+    this.sendOrQueue(message)
   }
 
   sendSilence(durationMs: number): void {
-    if (this.socket?.readyState !== WebSocket.OPEN) {
-      return
-    }
-
     const message: AudioSilenceMessage = {
       type: 'audio.silence',
       sessionId: this.options.sessionId,
@@ -120,7 +125,7 @@ export class SubtitleWebSocketClient {
       durationMs
     }
 
-    this.socket.send(JSON.stringify(message))
+    this.sendOrQueue(message)
   }
 
   private handleMessage(data: unknown): void {
@@ -151,14 +156,48 @@ export class SubtitleWebSocketClient {
       return
     }
 
+    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      this.options.onStateChange('error')
+      return
+    }
+
+    this.reconnectAttempts += 1
+    const reconnectDelayMs = Math.min(
+      INITIAL_RECONNECT_DELAY_MS * 2 ** (this.reconnectAttempts - 1),
+      MAX_RECONNECT_DELAY_MS
+    )
+
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = undefined
       this.connect()
-    }, RECONNECT_DELAY_MS)
+    }, reconnectDelayMs)
   }
 
   private clearReconnectTimer(): void {
     window.clearTimeout(this.reconnectTimer)
     this.reconnectTimer = undefined
+  }
+
+  private sendOrQueue(message: OutgoingAudioMessage): void {
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify(message))
+      return
+    }
+
+    this.pendingMessages.push(message)
+
+    if (this.pendingMessages.length > MAX_PENDING_MESSAGES) {
+      this.pendingMessages.splice(0, this.pendingMessages.length - MAX_PENDING_MESSAGES)
+    }
+  }
+
+  private flushPendingMessages(): void {
+    if (this.socket?.readyState !== WebSocket.OPEN || this.pendingMessages.length === 0) {
+      return
+    }
+
+    const messages = this.pendingMessages
+    this.pendingMessages = []
+    messages.forEach((message) => this.socket?.send(JSON.stringify(message)))
   }
 }
